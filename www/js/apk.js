@@ -598,6 +598,55 @@
   });
   $('pref-spin').addEventListener('change', (e) => { prefs.spin = e.target.checked; ls.set('prefs', prefs); applyPrefs(); });
 
+  // ---------- Фоновое воспроизведение: уведомление, экран блокировки, наушники ----------
+  if (S.isAndroid && cap && cap.nativePromise) {
+    const media = (o) => native('SquadMedia', 'update', o).catch(() => {});
+    let artFor = null, started = false;
+    const state = () => { const tm = S.time(); return { playing: S.playing(), position: tm.cur, duration: isFinite(tm.dur) ? tm.dur : 0, speed: S.rate() }; };
+    // обложка для уведомления: 256px jpeg (внешние картинки без CORS пропускаем)
+    const artOf = (src) => new Promise((res) => {
+      if (!src) return res('');
+      const img = new Image();
+      if (!/^(data|blob):/.test(src)) img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        try {
+          const c = document.createElement('canvas'); c.width = c.height = 256;
+          const k = Math.max(256 / img.naturalWidth, 256 / img.naturalHeight);
+          const w = img.naturalWidth * k, h = img.naturalHeight * k;
+          c.getContext('2d').drawImage(img, (256 - w) / 2, (256 - h) / 2, w, h);
+          res(c.toDataURL('image/jpeg', 0.85));
+        } catch (_) { res(''); }
+      };
+      img.onerror = () => res('');
+      img.src = src;
+    });
+    const sendTrack = () => {
+      const t = S.cur();
+      if (!t) return;
+      const key = t.key;
+      media(Object.assign({ title: t.title, artist: t.artist || '' }, state()));
+      if (artFor === key) return;
+      artFor = key;
+      artOf(t.thumb).then((art) => { if (artFor === key) media({ art }); });
+    };
+    S.on('track', sendTrack);
+    S.on('play', () => {
+      if (!started && !S.playing()) return; // не показываем уведомление, пока ничего не включали
+      if (!started) { started = true; sendTrack(); } else media(state());
+    });
+    for (const ev of ['seeked', 'ratechange', 'durationchange']) {
+      document.addEventListener(ev, (e) => { if (started && e.target && e.target.tagName === 'AUDIO' && S.playing()) media(state()); }, true);
+    }
+    window.addEventListener('squadMedia', (e) => {
+      const a = e.action;
+      if (a === 'play') { if (!S.playing()) S.togglePlay(); }
+      else if (a === 'pause') { if (S.playing()) S.pause(); }
+      else if (a === 'next') S.step(1);
+      else if (a === 'prev') S.step(-1);
+      else if (a === 'seek' && e.pos >= 0) S.seek(e.pos);
+    });
+  }
+
   // ---------- Кнопка «Назад» Android ----------
   function back() {
     if (closeSheet()) return;

@@ -8,6 +8,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(MusicScannerPlugin.class);
         registerPlugin(SquadUpdaterPlugin.class);
+        registerPlugin(SquadMediaPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }
