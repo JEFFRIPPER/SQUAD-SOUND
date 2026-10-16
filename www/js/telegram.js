@@ -297,7 +297,7 @@
       };
       await docs;
       await Promise.all(Array.from({ length: Math.min(PF_WORKERS, todo.length) }, worker));
-      return { done: ok, failed: pf.total - ok, total: pf.total };
+      return { done: ok, failed: pf.done - ok + (full ? todo.length - next : 0), total: pf.total };
     })();
     pf.run.finally(() => { pf.run = null; }).catch(() => {});
     return pf.run;
