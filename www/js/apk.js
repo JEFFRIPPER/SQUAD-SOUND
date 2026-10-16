@@ -39,6 +39,8 @@
     mic: 'M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3',
     sparkle: 'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z',
     close: 'M6 6l12 12M18 6 6 18',
+    more: 'M12 5h.01M12 12h.01M12 19h.01',
+    image: 'M4 4h16v16H4zM4 16l5-5 4 4 3-3 4 4M15 9h.01',
   };
 
   // ---------- Настройки интерфейса ----------
@@ -373,21 +375,36 @@
   now.prepend(bg);
   const top = document.createElement('div');
   top.className = 'np-top';
-  top.innerHTML = '<button class="icon-btn" data-np="close" aria-label="Свернуть">' + svg(IC.down) + '</button>' +
-    '<div class="np-from"><small>Сейчас играет</small><span id="np-from"></span></div>' +
-    '<button class="icon-btn" data-np="eq" aria-label="Звук">' + svg(IC.sound) + '</button>';
+  top.innerHTML = '<button class="icon-btn np-round" data-np="close" aria-label="Свернуть">' + svg(IC.down) + '</button>' +
+    '<button class="np-pill" data-np="queue"><span id="np-from"></span><b id="np-left"></b></button>' +
+    '<button class="icon-btn np-round" data-np="more" aria-label="Ещё">' + svg(IC.more) + '</button>';
   bg.after(top);
-  const like = document.createElement('button');
-  like.className = 'icon-btn np-like';
-  like.dataset.np = 'like';
-  like.setAttribute('aria-label', 'В любимые');
-  like.innerHTML = svg(IC.heart);
-  now.querySelector('.meta').append(like);
+  // «Далее: …» между временем
+  const nextChip = document.createElement('button');
+  nextChip.className = 'np-next';
+  nextChip.dataset.np = 'queue';
+  $('t-cur').after(nextChip);
+  // кнопки управления в плашке: повтор, назад, играть, вперёд, перемешать
+  const ctl = now.querySelector('.controls');
+  ctl.append($('btn-shuffle'));
+  ctl.prepend($('btn-repeat'));
   const acts = document.createElement('div');
   acts.className = 'np-acts';
-  acts.innerHTML = [['queue', 'Очередь'], ['lyrics', 'Текст'], ['timer', 'Таймер'], ['speed', 'Скорость'], ['plus', 'В плейлист']]
-    .map(([k, l]) => '<button data-np="' + k + '">' + svg(IC[k]) + '<span>' + l + '</span></button>').join('');
+  const ab = (k, l) => '<button class="icon-btn" data-np="' + k + '" aria-label="' + l + '">' + svg(IC[k === 'like' ? 'heart' : k]) + '</button>';
+  acts.innerHTML = '<div class="np-pills">' + ab('like', 'В любимые') + ab('plus', 'В плейлист') + '</div>' +
+    '<div class="np-pills">' + ab('lyrics', 'Текст') + ab('sound', 'Эквалайзер') + ab('speed', 'Скорость') + '</div>';
   now.append(acts);
+  const like = acts.querySelector('[data-np="like"]');
+  like.classList.add('np-like');
+
+  function syncNext() {
+    const q = S.queueInfo, left = q.pos >= 0 ? Math.max(0, q.len - q.pos - 1) : 0;
+    $('np-left').textContent = left > 99 ? '99+' : left || '';
+    const n = S.upNext();
+    nextChip.textContent = n ? 'Далее: ' + (n.artist && n.artist !== 'Неизвестный исполнитель' ? n.artist + ' — ' : '') + n.title : '';
+    nextChip.hidden = !n;
+  }
+  ['queue', 'library', 'tab'].forEach((ev) => S.on(ev, () => { if (S.settings.tab === 'player') syncNext(); }));
 
   function syncBg() {
     const img = $('cover-img');
@@ -403,6 +420,7 @@
     syncBg(); syncLike();
     const t = S.cur();
     $('np-from').textContent = wave ? 'Моя волна' : t ? (t.album || t.folder || 'Медиатека') : '';
+    syncNext();
     if (lyr.open) loadLyrics();
   });
 
@@ -419,7 +437,8 @@
     const t = S.cur();
     const k = b.dataset.np;
     if (k === 'close') closePlayer();
-    else if (k === 'eq') { closePlayer(); setTimeout(() => go('sound'), 0); }
+    else if (k === 'sound') openEq();
+    else if (k === 'more') openMore();
     else if (k === 'like') { if (t) toggleLike(t.key); }
     else if (k === 'queue') { closePlayer(); setTimeout(() => { go('library'); S.openLib('queue'); }, 0); }
     else if (k === 'plus') $('np-playlist').click();
@@ -431,7 +450,7 @@
   // свайп вниз по плееру — свернуть
   let sw = null;
   now.addEventListener('touchstart', (e) => {
-    if (e.touches.length !== 1 || e.target.closest('input, .np-acts') || now.scrollTop > 0) { sw = null; return; }
+    if (e.touches.length !== 1 || e.target.closest('input, .np-acts, .controls') || now.scrollTop > 0) { sw = null; return; }
     sw = { y: e.touches[0].clientY, x: e.touches[0].clientX, dy: 0 };
   }, { passive: true });
   now.addEventListener('touchmove', (e) => {
@@ -543,9 +562,11 @@
   // Точная скорость: шаг 0,01, кнопки ±0,05 и готовые значения
   function openSpeed() {
     const r = $('speed');
-    const body = openSheet('Скорость', '<div class="spd"><button class="icon-btn" data-d="-0.05">−</button><b class="spd-v"></b><button class="icon-btn" data-d="0.05">+</button></div>' +
-      '<input type="range" min="0.5" max="2" step="0.01" class="spd-r"><div class="chips sheet-chips">' +
-      [0.5, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 2].map((v) => '<button class="chip" data-v="' + v + '">' + String(v).replace('.', ',') + '×</button>').join('') + '</div>' +
+    const body = openSheet('Скорость', '<div class="spd-cards">' +
+      [[0.8, 'Slowed', 1], [1, 'Обычная', 0], [1.25, 'Speed up', 1]].map(([v, l, vn]) => '<button data-v="' + v + '" data-vn="' + vn + '"><b>' + String(v).replace('.', ',') + '×</b><span>' + l + '</span></button>').join('') + '</div>' +
+      '<div class="spd"><button class="icon-btn" data-d="-0.05">−</button><b class="spd-v"></b><button class="icon-btn" data-d="0.05">+</button></div>' +
+      '<input type="range" min="0.5" max="2" step="0.01" class="spd-r"><div class="chips sheet-chips spd-chips">' +
+      [0.5, 0.75, 0.9, 1.1, 1.5, 2].map((v) => '<button class="chip" data-v="' + v + '">' + String(v).replace('.', ',') + '×</button>').join('') + '</div>' +
       '<label class="switch"><input type="checkbox" class="spd-vinyl"><span></span>Тон вместе со скоростью (винил)</label>');
     const rr = body.querySelector('.spd-r');
     const vin = body.querySelector('.spd-vinyl');
@@ -567,9 +588,96 @@
     body.addEventListener('click', (e) => {
       const b = e.target.closest('[data-d],[data-v]');
       if (!b) return;
+      // Slowed / Speed up — как в жанре: тон меняется вместе со скоростью
+      if (b.dataset.vn != null && $('vinyl').checked !== (b.dataset.vn === '1')) { vin.checked = b.dataset.vn === '1'; vin.onchange(); }
       set(b.dataset.d ? +r.value + +b.dataset.d : +b.dataset.v);
     });
     sync();
+  }
+
+  // Меню «⋮» плеера
+  function openMore() {
+    const body = openSheet('Ещё', '<div class="sheet-list">' +
+      '<button data-m="timer">' + svg(IC.timer) + 'Таймер сна</button>' +
+      '<button data-m="cover">' + svg(IC.image) + 'Своя обложка</button>' +
+      '<button data-m="queue">' + svg(IC.queue) + 'Очередь</button>' +
+      '<button data-m="sound">' + svg(IC.sound) + 'Эквалайзер и эффекты целиком</button></div>');
+    body.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-m]');
+      if (!b) return;
+      const k = b.dataset.m;
+      if (k === 'timer') openTimer();
+      else if (k === 'cover') openCoverSheet();
+      else {
+        closeSheet(); closePlayer();
+        setTimeout(() => { if (k === 'queue') { go('library'); S.openLib('queue'); } else go('sound'); }, 0);
+      }
+    });
+  }
+
+  // Быстрый эквалайзер: пресеты и кривая, точки тянутся пальцем. Пишет в те же ползунки, что вкладка «Звук»
+  function openEq() {
+    const sel = $('eq-preset');
+    const bands = [...document.querySelectorAll('#eq-bands input.vslider')];
+    const freqs = bands.map((i) => i.parentElement.querySelector('.eq-freq').textContent);
+    const W = 320, H = 150, PAD = 14, MAX = 12;
+    const xs = bands.map((_, i) => PAD + i * (W - 2 * PAD) / (bands.length - 1));
+    const yOf = (v) => H / 2 - v / MAX * (H / 2 - PAD);
+    const body = openSheet('Эквалайзер', '<p class="eqq-hifi hint"></p><div class="chips eqq-pr"></div>' +
+      '<svg class="eqq" viewBox="0 0 ' + W + ' ' + H + '"><line x1="0" x2="' + W + '" y1="' + H / 2 + '" y2="' + H / 2 + '" class="eqq-zero"/>' +
+      '<path class="eqq-fill"/><path class="eqq-line"/>' + xs.map((x, i) => '<circle r="9" cx="' + x + '" data-i="' + i + '"/>').join('') + '</svg>' +
+      '<div class="eqq-f">' + freqs.map((f) => '<span>' + f + '</span>').join('') + '</div>' +
+      '<div class="chips"><button class="btn" data-e="reset">Сбросить</button><button class="btn primary" data-e="save">Сохранить как пресет</button></div>');
+    const g = body.querySelector('svg.eqq');
+    const pts = [...g.querySelectorAll('circle')];
+    const vals = () => bands.map((b) => +b.value);
+    function curve(v) { // Catmull-Rom → кривые Безье
+      const p = v.map((y, i) => [xs[i], yOf(y)]);
+      let d = 'M' + p[0][0] + ' ' + p[0][1];
+      for (let i = 0; i < p.length - 1; i++) {
+        const a = p[i - 1] || p[i], b = p[i], c = p[i + 1], e = p[i + 2] || c;
+        d += ' C' + (b[0] + (c[0] - a[0]) / 6) + ' ' + (b[1] + (c[1] - a[1]) / 6) + ' ' + (c[0] - (e[0] - b[0]) / 6) + ' ' + (c[1] - (e[1] - b[1]) / 6) + ' ' + c[0] + ' ' + c[1];
+      }
+      return d;
+    }
+    function draw() {
+      const v = vals(), d = curve(v);
+      g.querySelector('.eqq-line').setAttribute('d', d);
+      g.querySelector('.eqq-fill').setAttribute('d', d + ' L' + xs[xs.length - 1] + ' ' + H + ' L' + xs[0] + ' ' + H + 'Z');
+      pts.forEach((c, i) => c.setAttribute('cy', yOf(v[i])));
+      const st = S.sound();
+      body.querySelector('.eqq-hifi').textContent = st.hifi ? 'Включён Hi-Fi «всегда без обработки» — эквалайзер сейчас не звучит. Выключается во вкладке «Звук».' : '';
+      const cur = sel.value;
+      body.querySelector('.eqq-pr').innerHTML = [...sel.options].filter((o) => o.value !== 'custom')
+        .map((o) => '<button class="chip' + (o.value === cur ? ' on' : '') + '" data-p="' + o.value + '">' + esc(o.textContent) + '</button>').join('') +
+        presets.map((x, i) => '<button class="chip" data-u="' + i + '">' + esc(x.name) + '</button>').join('');
+    }
+    function setBand(i, v) {
+      const b = bands[i];
+      b.value = Math.max(-MAX, Math.min(MAX, Math.round(v * 2) / 2));
+      b.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    let drag = null;
+    const toVal = (e) => { const r = g.getBoundingClientRect(); const y = (e.clientY - r.top) / r.height * H; return (H / 2 - y) / (H / 2 - PAD) * MAX; };
+    g.addEventListener('pointerdown', (e) => {
+      const r = g.getBoundingClientRect(), x = (e.clientX - r.left) / r.width * W;
+      let i = 0; xs.forEach((xx, j) => { if (Math.abs(xx - x) < Math.abs(xs[i] - x)) i = j; }); // ближайшая полоса
+      drag = i; g.setPointerCapture(e.pointerId);
+      setBand(i, toVal(e)); draw();
+    });
+    g.addEventListener('pointermove', (e) => { if (drag != null) { setBand(drag, toVal(e)); draw(); } });
+    const up = () => { drag = null; };
+    g.addEventListener('pointerup', up); g.addEventListener('pointercancel', up);
+    body.addEventListener('click', (e) => {
+      const p = e.target.closest('[data-p]'), u = e.target.closest('[data-u]'), a = e.target.closest('[data-e]');
+      if (p) { sel.value = p.dataset.p; sel.dispatchEvent(new Event('change')); }
+      else if (u) { const x = presets[+u.dataset.u]; S.setSound(x.s); S.toast('Пресет: ' + x.name); }
+      else if (a && a.dataset.e === 'reset') $('eq-reset').click();
+      else if (a && a.dataset.e === 'save') document.getElementById('pr-save').click();
+      else return;
+      draw();
+    });
+    draw();
   }
 
   // ---------- Тексты песен (LRCLIB — открытая база, синхронизация по строкам) ----------

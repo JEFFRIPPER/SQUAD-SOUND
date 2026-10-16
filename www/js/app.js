@@ -765,6 +765,7 @@
     if (qpos < 0) { queue = [key]; qpos = 0; playAt(0); return; }
     queue.splice(qpos + 1, 0, key);
     toast('Будет следующим');
+    emitApp('queue');
     if (view.tab === 'queue') renderLib();
   }
 
@@ -773,6 +774,7 @@
     if (qpos < 0) { queue = [key]; qpos = 0; playAt(0); return; }
     queue.push(key);
     toast('Добавлено в очередь');
+    emitApp('queue');
     if (view.tab === 'queue') renderLib();
   }
 
@@ -1076,6 +1078,7 @@
     $('btn-shuffle').classList.toggle('on', settings.shuffle);
     $('btn-repeat').classList.toggle('on', settings.repeat !== 'off');
     $('repeat-one').classList.toggle('show', settings.repeat === 'one');
+    emitApp('queue');
   }
 
   $('volume').addEventListener('input', (e) => { paintRange(e.target); engine.set('volume', +e.target.value); saveFx(); });
@@ -1832,7 +1835,9 @@
       if (shuffle != null) settings.shuffle = was;
       playAt(qpos);
     },
-    append(keys) { queue.push(...keys); if (view.tab === 'queue') renderLib(); },
+    append(keys) { queue.push(...keys); emitApp('queue'); if (view.tab === 'queue') renderLib(); },
+    // что заиграет после текущего (при «повтор выкл» в конце очереди — ничего)
+    upNext() { const p = nextPos(true); return p >= 0 && p !== qpos ? byKey.get(queue[p]) || null : null; },
     togglePlay, step, showTab, openLib, toast, fmt, esc, renderLib, savePlaylists, enqueue, playNext,
     webSearch: (q) => webSearch(q),
     on: (type, cb) => appEvents.addEventListener(type, cb),
