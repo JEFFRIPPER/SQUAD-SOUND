@@ -4,8 +4,15 @@ package com.squad.sound;
 // JS: Capacitor.nativePromise('SquadMedia', 'update', {...}); нажатия приходят window-событием «squadMedia».
 
 import android.app.Activity;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.media.AudioDeviceCallback;
+import android.media.AudioDeviceInfo;
+import android.media.AudioManager;
+import android.os.Build;
+import android.os.SystemClock;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
@@ -37,6 +44,26 @@ public class SquadMediaPlugin extends Plugin {
     @Override
     public void load() {
         self = this;
+        Context ctx = getContext();
+        // Наушники выдернули / Bluetooth отвалился — пауза, чтобы музыка не заорала из динамика
+        ContextCompat.registerReceiver(ctx, new BroadcastReceiver() {
+            @Override public void onReceive(Context c, Intent i) { emit("noisy", -1); }
+        }, new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY), ContextCompat.RECEIVER_NOT_EXPORTED);
+        // Сменился выход звука (подключили наушники) — JS перезапустит вывод Web Audio под новое устройство,
+        // иначе на некоторых телефонах он продолжает писать с параметрами динамика и трещит
+        if (Build.VERSION.SDK_INT >= 23) {
+            final long since = SystemClock.elapsedRealtime();
+            AudioManager am = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
+            am.registerAudioDeviceCallback(new AudioDeviceCallback() {
+                @Override public void onAudioDevicesAdded(AudioDeviceInfo[] d) { route(d, since); }
+                @Override public void onAudioDevicesRemoved(AudioDeviceInfo[] d) { route(d, since); }
+            }, main);
+        }
+    }
+
+    private static void route(AudioDeviceInfo[] d, long since) {
+        if (SystemClock.elapsedRealtime() - since < 2000) return; // первый вызов — список уже подключённых устройств
+        for (AudioDeviceInfo i : d) if (i.isSink()) { emit("route", -1); return; }
     }
 
     // Жив ли плеер в WebView (после выгрузки процесса — нет)

@@ -7,6 +7,7 @@
   const decks = [$('audio'), $('audio2')];
   const engine = new AudioEngine(decks[0], decks[1]);
   window.squadEngine = engine; // для отладки из DevTools
+  engine.lean = !!(window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === 'android'); // .exe не меняем
   const A = () => engine.audio; // активная дека
   const AUDIO_RE = /\.(mp3|flac|wav|ogg|oga|m4a|aac|opus|webm|mp4)$/i; // WMA Chromium не играет
   const cap = window.Capacitor;
@@ -1623,7 +1624,7 @@
         const tr = byKey.get(t.key);
         if (tr) { tr.metaDone = false; loadMeta(tr).then(() => scheduleRender()).catch(() => {}); } // теги и обложка из файла
         if (view.tab === 'telegram' && Date.now() - lastHead > 700) { lastHead = Date.now(); renderLib(); }
-      });
+      }, () => !A().paused); // пока играет музыка — тихий режим загрузки
       if (r && r.total) toast('Telegram: скачано ' + tracksWord(r.done) + (r.failed ? ', не скачалось ' + r.failed : ''));
     } catch (e) {
       console.warn('Telegram, фоновая загрузка:', e);
