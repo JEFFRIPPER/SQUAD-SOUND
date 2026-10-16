@@ -90,5 +90,5 @@ jobs:
           make_latest: true
           files: out/*
           body: |
-            **Windows:** `SQUAD-SOUND-…-win-x64-nsis.exe` — установщик, `…-portable.exe` — без установки.
+            **Windows:** `SQUAD-SOUND-…-setup.exe` — установщик, `SQUAD-SOUND-…-portable.exe` — без установки.
             **Android:** `SQUAD-SOUND-…-android.apk` — установите, разрешив установку из неизвестных источников.

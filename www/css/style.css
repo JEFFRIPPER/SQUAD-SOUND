@@ -1,7 +1,10 @@
+/* Шрифт Сквада (OFL, из бота Фини) — только для заголовков */
+@font-face { font-family: 'Squad'; font-display: swap; src: url(../fonts/squad-latin.woff2) format('woff2'); unicode-range: U+0000-00FF, U+2000-206F; }
+@font-face { font-family: 'Squad'; font-display: swap; src: url(../fonts/squad-cyrillic.woff2) format('woff2'); unicode-range: U+0400-045F, U+0490-0491, U+2116; }
 :root {
-  --bg: #0b0b10; --bg2: #13131b; --card: #1a1a24; --line: #2a2a38;
-  --text: #f2f2f7; --muted: #8d8da3;
-  --accent: #ff2e63; --accent2: #ff9a3c; --on-accent: #fff;
+  --bg: #070203; --bg2: #140507; --card: #1e080b; --line: #3a0d14;
+  --text: #f8e9ea; --muted: #b9999c;
+  --accent: #ff2d48; --accent2: #d10f2a; --on-accent: #fff;
   --grad: linear-gradient(135deg, var(--accent), var(--accent2));
   --radius: 18px;
   --safe-top: env(safe-area-inset-top, 0px);
@@ -184,3 +187,33 @@ input[type=color] { width: 48px; height: 36px; border: 0; background: none; padd
   .eq-band { min-width: 20px; }
 }
 @media (min-width: 821px) { .now { display: flex !important; } }
+
+/* ---------- Тема «Сквад»: как у Фини — кровавый свет сверху, свечение, шрифт Squad ---------- */
+.brand-name, .card h3, .meta .title, .empty-icon { font-family: 'Squad', system-ui, sans-serif; font-weight: 400; }
+.brand-name { font-size: 22px; letter-spacing: .04em; transform: skewX(-8deg); }
+.card h3 { font-size: 18px; letter-spacing: .03em; }
+.meta .title { font-size: 26px; }
+.cover-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: none; }
+[data-theme="squad"] body {
+  background:
+    radial-gradient(120% 60% at 50% -12%, rgba(150, 0, 24, 0.62), transparent 62%),
+    radial-gradient(90% 55% at 110% 105%, rgba(110, 0, 18, 0.42), transparent 60%),
+    radial-gradient(70% 40% at -10% 60%, rgba(90, 0, 14, 0.30), transparent 60%),
+    var(--bg);
+}
+[data-theme="squad"] .topbar,
+[data-theme="squad"] .now { background: rgba(20, 5, 7, 0.55); border-color: rgba(255, 64, 84, 0.14); }
+[data-theme="squad"] .lib-actions { background: transparent; }
+[data-theme="squad"] .card,
+[data-theme="squad"] .eq-wrap { background: rgba(30, 8, 11, 0.78); border-color: rgba(255, 64, 84, 0.14); }
+[data-theme="squad"] .tab.active,
+[data-theme="squad"] .btn.primary,
+[data-theme="squad"] .chip.on,
+[data-theme="squad"] .play-btn { box-shadow: 0 0 20px rgba(255, 30, 60, 0.55); }
+[data-theme="squad"] .cover { background: #000; box-shadow: 0 0 40px rgba(255, 30, 60, 0.45); }
+[data-theme="squad"] .cover-img { display: block; }
+[data-theme="squad"] .cover-letter { display: none; }
+[data-theme="squad"] input[type=range]::-webkit-slider-thumb { box-shadow: 0 0 10px rgba(255, 30, 60, 0.7); }
+[data-theme="squad"] .track.playing { background: rgba(61, 9, 17, 0.7); }
+[data-theme="squad"] .brand-name b { text-shadow: none; }
+[data-theme="squad"] .brand-name { text-shadow: 0 0 18px rgba(255, 30, 60, 0.45); }

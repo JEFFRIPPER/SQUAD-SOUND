@@ -17,7 +17,6 @@
   "build": {
     "appId": "com.squad.sound",
     "productName": "SQUAD SOUND",
-    "artifactName": "SQUAD-SOUND-${version}-${os}-${arch}-${target}.${ext}",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -45,7 +44,11 @@
         }
       ]
     },
+    "portable": {
+      "artifactName": "SQUAD-SOUND-${version}-portable.${ext}"
+    },
     "nsis": {
+      "artifactName": "SQUAD-SOUND-${version}-setup.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,

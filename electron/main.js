@@ -19,7 +19,7 @@ function createWindow() {
     height: 800,
     minWidth: 380,
     minHeight: 560,
-    backgroundColor: '#0b0b10',
+    backgroundColor: '#070203',
     title: 'SQUAD SOUND',
     icon: path.join(__dirname, '..', 'build', 'icon.png'),
     autoHideMenuBar: true,

@@ -9,8 +9,8 @@ const run = (cmd) => execSync(cmd, { stdio: 'inherit', cwd: root });
 if (!fs.existsSync(path.join(root, 'android'))) run('npx cap add android');
 
 run('npx capacitor-assets generate --android --assetPath assets' +
-  ' --iconBackgroundColor "#13131b" --iconBackgroundColorDark "#13131b"' +
-  ' --splashBackgroundColor "#0b0b10" --splashBackgroundColorDark "#0b0b10"');
+  ' --iconBackgroundColor "#070203" --iconBackgroundColorDark "#070203"' +
+  ' --splashBackgroundColor "#070203" --splashBackgroundColorDark "#070203"');
 
 // Версия приложения = версия из package.json
 const pkg = require(path.join(root, 'package.json'));

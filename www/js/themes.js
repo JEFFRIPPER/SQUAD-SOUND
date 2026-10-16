@@ -5,11 +5,12 @@
 
   window.SQUAD_THEMES = [
     {
+      // Тема Фини / SQUAD VPN: кроваво-красная со свечением (FINYA-HELPER-TG/serverless/webapp)
       id: 'squad', name: 'Сквад',
       vars: {
-        bg: '#0b0b10', bg2: '#13131b', card: '#1a1a24', line: '#2a2a38',
-        text: '#f2f2f7', muted: '#8d8da3',
-        accent: '#ff2e63', accent2: '#ff9a3c', onAccent: '#ffffff',
+        bg: '#070203', bg2: '#140507', card: '#1e080b', line: '#3a0d14',
+        text: '#f8e9ea', muted: '#b9999c',
+        accent: '#ff2d48', accent2: '#d10f2a', onAccent: '#ffffff',
       },
     },
     {
@@ -65,7 +66,7 @@
       vars: {
         bg: '#f4f4f8', bg2: '#ffffff', card: '#ffffff', line: '#e0e0ea',
         text: '#15151c', muted: '#6c6c80',
-        accent: '#ff2e63', accent2: '#ff9a3c', onAccent: '#ffffff',
+        accent: '#ff2d48', accent2: '#d10f2a', onAccent: '#ffffff',
       },
     },
   ];
