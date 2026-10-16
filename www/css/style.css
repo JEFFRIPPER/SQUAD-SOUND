@@ -575,11 +575,6 @@ input[type=range]::-moz-range-thumb { width: 20px; height: 20px; border: 0; back
 .tg-spin { width: 36px; height: 36px; border-radius: 50%; border: 3px solid color-mix(in srgb, var(--accent) 25%, transparent);
   border-top-color: var(--accent); animation: tg-spin .9s linear infinite; }
 @keyframes tg-spin { to { transform: rotate(360deg); } }
-.tg-chat .t-art { display: grid; place-items: center; font-weight: 700; color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 16%, transparent); }
-.tg-chat .switch { margin-left: auto; pointer-events: none; }
-.tg-acc { flex-direction: column; align-items: center; gap: 8px; padding-top: 4px; }
-.tg-acc .hint { margin: 0; }
 
 /* ---------- Полосы прокрутки под тему (вместо системных со стрелками) ---------- */
 ::-webkit-scrollbar { width: 10px; height: 10px; }

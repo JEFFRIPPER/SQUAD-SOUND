@@ -1,4 +1,5 @@
-/* Telegram: вход по номеру, музыка из «Избранного» и выбранных чатов, кэш скачанных треков.
+/* Telegram: вход по номеру, музыка из профиля, кэш скачанных треков.
+ * Берём только песни, которые пользователь добавил в свой профиль Telegram.
  * Клиент — GramJS (js/vendor/telegram.min.js, пересборка: scripts/build-telegram.sh).
  * Ключи приложения (api_id / api_hash) подставляет CI в js/tg-config.js из секретов TG_API_ID / TG_API_HASH.
  */
@@ -184,40 +185,10 @@
     set({ phase: 'idle', error: '', me: null });
   }
 
-  // ---------- Источники: «Избранное» + выбранные чаты ----------
-  const SAVED = { id: 'me', title: 'Избранное' };
-  const sources = () => ls.get('sources', [SAVED]);
-  const setSources = (list) => ls.set('sources', list);
-
-  // InputPeer ⇄ JSON (сессия StringSession не хранит сущности, поэтому храним access_hash сами)
-  function packPeer(p) {
-    const o = { c: p.className };
-    for (const k of ['userId', 'chatId', 'channelId', 'accessHash']) if (p[k] != null) o[k] = p[k].toString();
-    return o;
-  }
-  function unpackPeer(src) {
-    if (src.id === 'me' || !src.peer) return 'me';
-    const o = {};
-    for (const k of ['userId', 'chatId', 'channelId', 'accessHash']) if (src.peer[k] != null) o[k] = G.bigInt(src.peer[k]);
-    return new G.Api[src.peer.c](o);
-  }
-
-  async function dialogs() {
-    await ensure();
-    const list = await client.getDialogs({ limit: 300 });
-    return list.filter((d) => d.inputEntity && !(d.inputEntity instanceof G.Api.InputPeerSelf)).map((d) => ({
-      id: d.id.toString(),
-      title: d.title || d.name || 'Без названия',
-      kind: d.isChannel && !d.isGroup ? 'Канал' : d.isGroup ? 'Группа' : 'Чат',
-      peer: packPeer(d.inputEntity),
-    }));
-  }
-
-  // ---------- Треки ----------
+  // ---------- Музыка из профиля (users.getSavedMusic — песни, добавленные в свой профиль) ----------
   const AUDIO_EXT = /\.(mp3|flac|wav|ogg|oga|m4a|aac|opus|wma)$/i;
 
-  function trackOf(msg, src) {
-    const d = msg.media && msg.media.document;
+  function trackOf(d) {
     if (!d || !(d instanceof G.Api.Document)) return null;
     let audio = null, fileName = '';
     for (const a of d.attributes || []) {
@@ -226,43 +197,42 @@
     }
     if (audio && audio.voice) return null;
     if (!audio && !/^audio\//.test(d.mimeType || '') && !AUDIO_EXT.test(fileName)) return null;
-    const name = fileName || [audio && audio.performer, audio && audio.title].filter(Boolean).join(' - ') || 'Трек ' + msg.id;
+    const id = d.id.toString();
     return {
-      key: 'tg:' + src.id + ':' + msg.id,
-      name,
+      key: 'tg:music:' + id,
+      name: fileName || [audio && audio.performer, audio && audio.title].filter(Boolean).join(' - ') || 'Трек',
       title: (audio && audio.title) || '',
       artist: (audio && audio.performer) || '',
       duration: (audio && audio.duration) || 0,
       size: Number(d.size || 0),
       mime: d.mimeType || '',
-      folder: 'Telegram/' + src.title,
-      tg: { src: src.id, id: msg.id },
+      folder: 'Telegram/Профиль',
+      tg: { doc: id },
     };
   }
 
-  // Собрать музыку из всех источников. onProgress(текст)
-  async function sync(onProgress) {
+  // Все документы музыки профиля (свежие file_reference — нужны для скачивания)
+  async function profileDocs() {
     await ensure();
     const out = [];
-    const seen = new Set();
-    for (const src of sources()) {
-      if (onProgress) onProgress(src.title);
-      const peer = unpackPeer(src);
-      for (const filter of [new G.Api.InputMessagesFilterMusic(), new G.Api.InputMessagesFilterDocument()]) {
-        let msgs = [];
-        try { msgs = await client.getMessages(peer, { limit: 3000, filter }); }
-        catch (e) { console.warn('Telegram:', src.title, e); continue; }
-        for (const m of msgs) {
-          const t = m && trackOf(m, src);
-          if (t && !seen.has(t.key)) { seen.add(t.key); out.push(t); }
-        }
-      }
+    for (let offset = 0; offset < 5000;) {
+      const r = await client.invoke(new G.Api.users.GetSavedMusic({ id: new G.Api.InputUserSelf(), offset, limit: 100, hash: G.bigInt(0) }));
+      const docs = (r && r.documents) || [];
+      out.push(...docs);
+      offset += docs.length;
+      if (!docs.length || offset >= (r.count || 0)) break;
     }
+    return out;
+  }
+
+  async function sync() {
+    const out = [];
+    for (const d of await profileDocs()) { const t = trackOf(d); if (t) out.push(t); }
     ls.set('tracks', out);
     return out;
   }
 
-  const saved = () => ls.get('tracks', []);
+  const saved = () => ls.get('tracks', []).filter((t) => t.tg && t.tg.doc); // старые треки из чатов больше не показываем
 
   // Скачать трек (или взять из кэша). onProgress(0..1)
   const loading = new Map();
@@ -271,13 +241,9 @@
     const p = (async () => {
       const hit = await cache.get(t.key);
       if (hit) return hit;
-      await ensure();
-      const src = sources().find((s) => s.id === t.tg.src) || (t.tg.src === 'me' ? SAVED : null);
-      if (!src) throw new Error('Чат больше не выбран');
-      // сообщение берём заново: ссылка на файл в Telegram со временем устаревает
-      const [msg] = await client.getMessages(unpackPeer(src), { ids: [t.tg.id] });
-      if (!msg || !msg.media) throw new Error('Сообщение с треком удалено');
-      const buf = await client.downloadMedia(msg, {
+      const doc = (await profileDocs()).find((d) => d.id.toString() === t.tg.doc);
+      if (!doc) throw new Error('Трека больше нет в профиле');
+      const buf = await client.downloadMedia(doc, {
         progressCallback: (got, total) => { if (onProgress) onProgress(Number(total) ? Number(got) / Number(total) : 0); },
       });
       if (!buf || !buf.length) throw new Error('Пустой файл');
@@ -297,7 +263,6 @@
     state: st,
     on(cb) { subs.add(cb); return () => subs.delete(cb); },
     resume, login, submit, cancel, logout,
-    sources, setSources, SAVED, dialogs,
     sync, saved, blob,
     cachedKeys,
     cached: async (key) => !!(await cache.get(key)),
