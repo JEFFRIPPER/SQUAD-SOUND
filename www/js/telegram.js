@@ -247,6 +247,7 @@
       const doc = (docs || await profileDocs()).find((d) => d.id.toString() === t.tg.doc);
       if (!doc) throw new Error('Трека больше нет в профиле');
       const buf = await client.downloadMedia(doc, {
+        partSizeKb: 512, // по умолчанию 128 КБ за запрос — в 4 раза больше пауз между кусками
         progressCallback: (got, total) => { if (onProgress) onProgress(Number(total) ? Number(got) / Number(total) : 0); },
       });
       if (!buf || !buf.length) throw new Error('Пустой файл');
@@ -261,8 +262,9 @@
 
   async function cachedKeys() { return new Set(await cache.keys()); }
 
-  // Фоновая загрузка всех треков профиля в кэш: по одному, список документов — один раз.
+  // Фоновая загрузка всех треков профиля в кэш: PF_WORKERS файлов одновременно, список документов — один раз.
   // onStep(done, total, track) после каждого трека. Повторный вызов во время работы ничего не делает.
+  const PF_WORKERS = 4;
   const pf = { run: null, stop: false, done: 0, total: 0 };
   function prefetch(list, onStep) {
     if (pf.run) return pf.run;
@@ -271,25 +273,31 @@
       const have = new Set(await cache.keys());
       const todo = list.filter((t) => t.tg && t.tg.doc && !have.has(t.key));
       pf.done = 0; pf.total = todo.length;
-      let failed = 0;
+      let ok = 0, next = 0, full = false;
       if (!todo.length) return { done: 0, failed: 0, total: 0 };
-      let docs = await profileDocs();
-      for (const t of todo) {
-        if (pf.stop || st.phase !== 'ready') break;
-        try {
-          await blob(t, null, docs);
-        } catch (e) {
-          const m = (e && (e.errorMessage || e.message)) || '';
-          if (/FILE_REFERENCE/.test(m)) { // ссылки на файлы устарели — берём список заново и пробуем ещё раз
-            docs = await profileDocs();
-            try { await blob(t, null, docs); } catch (_) { failed++; }
-          } else if (/quota|QuotaExceeded/i.test(m + (e && e.name))) { failed += todo.length - pf.done; break; } // память кончилась
-          else failed++;
+      let docs = profileDocs();
+      // ссылки на файлы устарели — один перезапрос списка на всех, даже если упали сразу несколько потоков
+      const refresh = (old) => { if (docs === old) docs = profileDocs().catch(() => old); return docs; };
+      const worker = async () => {
+        while (!pf.stop && !full && st.phase === 'ready' && next < todo.length) {
+          const t = todo[next++];
+          const mine = docs;
+          try {
+            await blob(t, null, await mine);
+            ok++;
+          } catch (e) {
+            const m = (e && (e.errorMessage || e.message)) || '';
+            if (/FILE_REFERENCE/.test(m)) {
+              try { await blob(t, null, await refresh(mine)); ok++; } catch (_) {}
+            } else if (/quota|QuotaExceeded/i.test(m + (e && e.name))) full = true; // память кончилась
+          }
+          pf.done++;
+          if (onStep) try { onStep(pf.done, pf.total, t); } catch (_) {}
         }
-        pf.done++;
-        if (onStep) try { onStep(pf.done, pf.total, t); } catch (_) {}
-      }
-      return { done: pf.done - failed, failed, total: pf.total };
+      };
+      await docs;
+      await Promise.all(Array.from({ length: Math.min(PF_WORKERS, todo.length) }, worker));
+      return { done: ok, failed: pf.done - ok + (full ? todo.length - next : 0), total: pf.total };
     })();
     pf.run.finally(() => { pf.run = null; }).catch(() => {});
     return pf.run;
