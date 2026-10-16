@@ -386,7 +386,9 @@
     const img = $('cover-img');
     const src = img && img.getAttribute('src');
     const t = S.cur();
-    bg.style.backgroundImage = t && t.thumb && src ? 'url("' + src.replace(/"/g, '%22') + '")' : 'none';
+    const ci = $('cover').querySelector('.np-custom');
+    const custom = ci && ci.getAttribute('src');
+    bg.style.backgroundImage = custom ? 'url("' + custom + '")' : t && t.thumb && src ? 'url("' + src.replace(/"/g, '%22') + '")' : 'none';
   }
   $('cover-img').addEventListener('load', syncBg);
   function syncLike() { const t = S.cur(); like.classList.toggle('on', !!(t && isLiked(t.key))); }
@@ -665,6 +667,135 @@
     ls.set('prefs', prefs); applyPrefs();
   });
   $('pref-spin').addEventListener('change', (e) => { prefs.spin = e.target.checked; ls.set('prefs', prefs); applyPrefs(); });
+
+  // ---------- Свой фон приложения и свои обложки (картинки и GIF, лежат в IndexedDB) ----------
+  const idb = (() => {
+    let dbp = null;
+    const open = () => dbp || (dbp = new Promise((res, rej) => {
+      const r = indexedDB.open('squad-apk', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('blobs');
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    }));
+    const tx = (mode, f) => open().then((db) => new Promise((res, rej) => {
+      const t = db.transaction('blobs', mode);
+      const r = f(t.objectStore('blobs'));
+      t.oncomplete = () => res(r.result);
+      t.onerror = () => rej(t.error);
+    }));
+    return { get: (k) => tx('readonly', (st) => st.get(k)), set: (k, v) => tx('readwrite', (st) => st.put(v, k)), del: (k) => tx('readwrite', (st) => st.delete(k)) };
+  })();
+  const MAX_IMG = 30 * 1024 * 1024;
+  function pickImage() {
+    return new Promise((res) => {
+      const inp = document.createElement('input');
+      inp.type = 'file'; inp.accept = 'image/*';
+      inp.onchange = () => {
+        const f = inp.files && inp.files[0];
+        if (!f) return res(null);
+        if (f.size > MAX_IMG) { S.toast('Файл больше 30 МБ'); return res(null); }
+        res(f);
+      };
+      inp.click();
+    });
+  }
+
+  // фон приложения
+  const appBg = document.createElement('div');
+  appBg.className = 'app-bg';
+  appBg.innerHTML = '<img alt="">';
+  document.body.prepend(appBg);
+  let appBgUrl = null;
+  function applyAppBg(blob) {
+    if (appBgUrl) { URL.revokeObjectURL(appBgUrl); appBgUrl = null; }
+    if (blob) { appBgUrl = URL.createObjectURL(blob); appBg.firstChild.src = appBgUrl; } else appBg.firstChild.removeAttribute('src');
+    root.classList.toggle('has-bg', !!blob);
+    const rm = $('bg-remove'); if (rm) rm.disabled = !blob;
+  }
+  const bgVars = () => {
+    root.style.setProperty('--app-bg-dim', (prefs.bgDim ?? 55) / 100);
+    root.style.setProperty('--app-bg-blur', (prefs.bgBlur ?? 0) + 'px');
+  };
+  bgVars();
+  if (prefs.appBg) idb.get('appBg').then((b) => applyAppBg(b || null)).catch(() => {});
+
+  // свои обложки: для трека (cover:<key>) и общая для треков без обложки (cover:*)
+  const covers = new Set(ls.get('covers', []));
+  const coverUrls = new Map();
+  const npCustom = document.createElement('img');
+  npCustom.className = 'np-custom';
+  npCustom.alt = '';
+  $('cover').appendChild(npCustom);
+  let customFor = null;
+  async function coverUrl(id) {
+    if (coverUrls.has(id)) return coverUrls.get(id);
+    const b = await idb.get('cover:' + id).catch(() => null);
+    const u = b ? URL.createObjectURL(b) : null;
+    coverUrls.set(id, u);
+    return u;
+  }
+  function dropCoverUrl(id) { const u = coverUrls.get(id); if (u) URL.revokeObjectURL(u); coverUrls.delete(id); }
+  async function syncCustomCover() {
+    const t = S.cur();
+    const id = t && covers.has(t.key) ? t.key : t && !t.thumb && covers.has('*') ? '*' : null;
+    customFor = t ? t.key : null;
+    const u = id ? await coverUrl(id) : null;
+    if (customFor !== (t ? t.key : null)) return;
+    if (u) npCustom.src = u; else npCustom.removeAttribute('src');
+    $('cover').classList.toggle('has-custom', !!u);
+    syncBg();
+  }
+  S.on('track', syncCustomCover);
+  async function setCover(id, blob) {
+    dropCoverUrl(id);
+    if (blob) { await idb.set('cover:' + id, blob); covers.add(id); } else { await idb.del('cover:' + id).catch(() => {}); covers.delete(id); }
+    ls.set('covers', [...covers]);
+    syncCustomCover();
+  }
+  function openCoverSheet() {
+    const t = S.cur();
+    const body = openSheet('Своя обложка', '<p class="hint">Картинка или анимированный GIF. Хранится только на этом телефоне.</p><div class="sheet-list">' +
+      (t ? '<button data-cv="track">' + svg(IC.plus) + 'Для «' + esc(t.title) + '»</button>' : '') +
+      '<button data-cv="all">' + svg(IC.plus) + 'Для всех треков без обложки</button>' +
+      (t && covers.has(t.key) ? '<button data-cv="rm-track">' + svg(IC.close) + 'Убрать у этого трека</button>' : '') +
+      (covers.has('*') ? '<button data-cv="rm-all">' + svg(IC.close) + 'Убрать общую обложку</button>' : '') + '</div>');
+    body.addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-cv]');
+      if (!b) return;
+      const k = b.dataset.cv;
+      closeSheet();
+      try {
+        if (k === 'rm-track') await setCover(t.key, null);
+        else if (k === 'rm-all') await setCover('*', null);
+        else { const f = await pickImage(); if (f) { await setCover(k === 'all' ? '*' : t.key, f); S.toast('Обложка сохранена'); } }
+      } catch (_) { S.toast('Не удалось сохранить картинку'); }
+    });
+  }
+  // долгое нажатие на обложку в плеере
+  let lp = 0;
+  $('cover').addEventListener('touchstart', () => { clearTimeout(lp); lp = setTimeout(() => { lp = 0; if (navigator.vibrate) navigator.vibrate(15); openCoverSheet(); }, 550); }, { passive: true });
+  ['touchend', 'touchmove', 'touchcancel'].forEach((ev) => $('cover').addEventListener(ev, () => clearTimeout(lp), { passive: true }));
+  $('cover').addEventListener('contextmenu', (e) => { e.preventDefault(); });
+
+  const bcard = document.createElement('div');
+  bcard.className = 'card';
+  bcard.innerHTML = '<h3>Фон и обложки</h3>' +
+    '<p class="hint">Своя картинка или GIF на фоне всего приложения. Бесплатно и без ограничений.</p>' +
+    '<div class="chips"><button class="chip" id="bg-pick">Выбрать фон</button><button class="chip" id="bg-remove" disabled>Убрать фон</button></div>' +
+    '<p class="hint">Затемнение</p><input type="range" id="bg-dim" min="0" max="90" value="' + (prefs.bgDim ?? 55) + '">' +
+    '<p class="hint">Размытие</p><input type="range" id="bg-blur" min="0" max="30" value="' + (prefs.bgBlur ?? 0) + '">' +
+    '<p class="hint">Обложки</p><div class="chips"><button class="chip" id="cv-open">Своя обложка трека или GIF</button></div>' +
+    '<p class="hint">Совет: долгое нажатие на обложку в плеере тоже открывает выбор.</p>';
+  pcard.after(bcard);
+  $('bg-pick').addEventListener('click', async () => {
+    const f = await pickImage();
+    if (!f) return;
+    try { await idb.set('appBg', f); prefs.appBg = true; ls.set('prefs', prefs); applyAppBg(f); S.toast('Фон установлен'); } catch (_) { S.toast('Не удалось сохранить картинку'); }
+  });
+  $('bg-remove').addEventListener('click', () => { idb.del('appBg').catch(() => {}); prefs.appBg = false; ls.set('prefs', prefs); applyAppBg(null); });
+  $('bg-dim').addEventListener('input', (e) => { prefs.bgDim = +e.target.value; bgVars(); ls.set('prefs', prefs); });
+  $('bg-blur').addEventListener('input', (e) => { prefs.bgBlur = +e.target.value; bgVars(); ls.set('prefs', prefs); });
+  $('cv-open').addEventListener('click', openCoverSheet);
 
   // ---------- Фоновое воспроизведение: уведомление, экран блокировки, наушники ----------
   if (S.isAndroid && cap && cap.nativePromise) {
