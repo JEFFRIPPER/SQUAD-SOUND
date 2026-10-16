@@ -116,10 +116,12 @@
     return pl;
   }
   const isLiked = (key) => { const pl = S.playlists.find((p) => p.id === LIKED); return !!(pl && pl.keys.includes(key)); };
+  const likeHooks = [];
   function toggleLike(key) {
     const pl = likedList();
     const i = pl.keys.indexOf(key);
     if (i >= 0) pl.keys.splice(i, 1); else pl.keys.unshift(key);
+    likeHooks.forEach((f) => f(key, i < 0));
     S.savePlaylists();
     S.toast(i >= 0 ? 'Убрано из любимых' : 'Добавлено в любимые');
     syncLike();
@@ -796,6 +798,162 @@
   $('bg-dim').addEventListener('input', (e) => { prefs.bgDim = +e.target.value; bgVars(); ls.set('prefs', prefs); });
   $('bg-blur').addEventListener('input', (e) => { prefs.bgBlur = +e.target.value; bgVars(); ls.set('prefs', prefs); });
   $('cv-open').addEventListener('click', openCoverSheet);
+
+  // ---------- Last.fm: скробблинг, «сейчас играет», любимые → «♥» ----------
+  // Ключ API и секрет пользователь берёт бесплатно на last.fm/api/account/create; вход — через страницу Last.fm (пароль мы не видим).
+  const md5 = (() => {
+    const K = new Uint32Array(64);
+    const R = [7, 12, 17, 22, 5, 9, 14, 20, 4, 11, 16, 23, 6, 10, 15, 21];
+    for (let i = 0; i < 64; i++) K[i] = Math.floor(Math.abs(Math.sin(i + 1)) * 2 ** 32);
+    return (str) => {
+      const b = new TextEncoder().encode(str), n = ((b.length + 8) >> 6) + 1, w = new Uint32Array(n * 16);
+      for (let i = 0; i < b.length; i++) w[i >> 2] |= b[i] << ((i % 4) * 8);
+      w[b.length >> 2] |= 0x80 << ((b.length % 4) * 8);
+      w[n * 16 - 2] = b.length * 8;
+      let a0 = 0x67452301, b0 = 0xefcdab89, c0 = 0x98badcfe, d0 = 0x10325476;
+      for (let j = 0; j < w.length; j += 16) {
+        let A = a0, B = b0, C = c0, D = d0;
+        for (let i = 0; i < 64; i++) {
+          let F, g;
+          if (i < 16) { F = (B & C) | (~B & D); g = i; }
+          else if (i < 32) { F = (D & B) | (~D & C); g = (5 * i + 1) % 16; }
+          else if (i < 48) { F = B ^ C ^ D; g = (3 * i + 5) % 16; }
+          else { F = C ^ (B | ~D); g = (7 * i) % 16; }
+          const r = R[(i >> 4) * 4 + (i % 4)];
+          const x = (A + F + K[i] + w[j + g]) >>> 0;
+          A = D; D = C; C = B;
+          B = (B + ((x << r) | (x >>> (32 - r)))) >>> 0;
+        }
+        a0 = (a0 + A) >>> 0; b0 = (b0 + B) >>> 0; c0 = (c0 + C) >>> 0; d0 = (d0 + D) >>> 0;
+      }
+      return [a0, b0, c0, d0].map((v) => [0, 8, 16, 24].map((k) => ((v >>> k) & 255).toString(16).padStart(2, '0')).join('')).join('');
+    };
+  })();
+  const LFM = 'https://ws.audioscrobbler.com/2.0/';
+  const lfm = Object.assign({ key: '', secret: '', sk: '', user: '', love: true }, ls.get('lfm', {}));
+  const lfmQ = ls.get('lfmq', []);
+  const lfmSave = () => ls.set('lfm', lfm);
+  async function lfmCall(params, signed) {
+    const p = Object.assign({ api_key: lfm.key }, params);
+    if (signed) p.api_sig = md5(Object.keys(p).sort().map((k) => k + p[k]).join('') + lfm.secret);
+    p.format = 'json';
+    const body = Object.keys(p).map((k) => encodeURIComponent(k) + '=' + encodeURIComponent(p[k])).join('&');
+    let text;
+    if (S.isAndroid && cap && cap.nativePromise) text = (await native('SquadMedia', 'post', { url: LFM, body })).body;
+    else text = await (await fetch(LFM, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body })).text();
+    const j = JSON.parse(text || '{}');
+    if (j.error) { const e = new Error(j.message || 'Last.fm ' + j.error); e.code = j.error; throw e; }
+    return j;
+  }
+  const lfmOk = () => !!(lfm.key && lfm.secret && lfm.sk);
+  const lfmTrack = (t) => t && t.artist && t.artist !== 'Неизвестный исполнитель' && t.title ? t : null;
+  let lfmFlushing = false;
+  async function lfmFlush() {
+    if (!lfmOk() || lfmFlushing || !lfmQ.length || !navigator.onLine) return;
+    lfmFlushing = true;
+    try {
+      while (lfmQ.length) {
+        const batch = lfmQ.slice(0, 50), p = { method: 'track.scrobble', sk: lfm.sk };
+        batch.forEach((x, i) => {
+          p['artist[' + i + ']'] = x.artist; p['track[' + i + ']'] = x.track; p['timestamp[' + i + ']'] = x.ts;
+          if (x.album) p['album[' + i + ']'] = x.album;
+          if (x.dur) p['duration[' + i + ']'] = x.dur;
+        });
+        await lfmCall(p, true);
+        lfmQ.splice(0, batch.length);
+        ls.set('lfmq', lfmQ);
+        lfm.count = (lfm.count || 0) + batch.length; lfmSave(); lfmUI();
+      }
+    } catch (e) {
+      if (e.code === 9) { lfm.sk = ''; lfmSave(); lfmUI(); S.toast('Last.fm: войдите заново'); } // сессия отозвана
+    } finally { lfmFlushing = false; }
+  }
+  // правило Last.fm: трек длиннее 30 с, прослушан наполовину или 4 минуты
+  const play = { key: null, ts: 0, sec: 0, done: false, np: false };
+  function lfmNow() {
+    const x = lfmTrack(S.cur());
+    if (play.np || !lfmOk() || !x || !S.playing()) return;
+    play.np = true;
+    lfmCall({ method: 'track.updateNowPlaying', sk: lfm.sk, artist: x.artist, track: x.title, album: x.album || '' }, true).catch(() => {});
+  }
+  S.on('track', () => {
+    const t = S.cur();
+    if (!t || t.key === play.key) return;
+    Object.assign(play, { key: t.key, ts: Math.floor(Date.now() / 1000), sec: 0, done: false, np: false });
+    lfmNow();
+  });
+  S.on('play', lfmNow);
+  setInterval(() => {
+    const t = S.cur();
+    if (!t || t.key !== play.key || !S.playing() || play.done) return;
+    play.sec += 2;
+    const d = S.time().dur;
+    if (!(d > 30) || play.sec < Math.min(d / 2, 240)) return;
+    play.done = true;
+    const x = lfmTrack(t);
+    if (!x || !lfmOk()) return;
+    lfmQ.push({ artist: x.artist, track: x.title, album: x.album || '', ts: play.ts, dur: Math.round(d) });
+    if (lfmQ.length > 1000) lfmQ.splice(0, lfmQ.length - 1000);
+    ls.set('lfmq', lfmQ);
+    lfmFlush();
+  }, 2000);
+  window.addEventListener('online', lfmFlush);
+  likeHooks.push((key, loved) => {
+    const x = lfmTrack(S.byKey(key));
+    if (lfmOk() && lfm.love && x) lfmCall({ method: loved ? 'track.love' : 'track.unlove', sk: lfm.sk, artist: x.artist, track: x.title }, true).catch(() => {});
+  });
+
+  let lfmToken = '';
+  async function lfmLogin() {
+    lfm.key = $('lfm-key').value.trim(); lfm.secret = $('lfm-secret').value.trim(); lfmSave();
+    if (!/^[0-9a-f]{32}$/i.test(lfm.key) || !/^[0-9a-f]{32}$/i.test(lfm.secret)) { S.toast('Ключ и секрет — по 32 символа из last.fm/api'); return; }
+    try {
+      lfmToken = (await lfmCall({ method: 'auth.getToken' }, true)).token;
+      openExt('https://www.last.fm/api/auth/?api_key=' + lfm.key + '&token=' + lfmToken);
+      lfmUI('Разрешите доступ на странице Last.fm и вернитесь в приложение');
+    } catch (e) { S.toast('Last.fm: ' + e.message); }
+  }
+  async function lfmSession() {
+    if (!lfmToken) return;
+    try {
+      const r = await lfmCall({ method: 'auth.getSession', token: lfmToken }, true);
+      lfmToken = '';
+      lfm.sk = r.session.key; lfm.user = r.session.name; lfmSave(); lfmUI();
+      S.toast('Last.fm: вы вошли как ' + lfm.user);
+      lfmFlush();
+    } catch (e) { if (e.code !== 14) { lfmToken = ''; lfmUI(); S.toast('Last.fm: ' + e.message); } } // 14 — ещё не разрешили
+  }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { lfmSession(); lfmFlush(); } });
+  const openExt = (url) => native('SquadUpdater', 'openUrl', { url }).catch(() => window.open(url, '_blank', 'noopener'));
+
+  const lcard = document.createElement('div');
+  lcard.className = 'card';
+  bcard.after(lcard);
+  function lfmUI(msg) {
+    if (lfmOk()) {
+      lcard.innerHTML = '<h3>Last.fm</h3><p class="hint">Скробблинг включён: <b>' + esc(lfm.user) + '</b>' +
+        (lfm.count ? ' · отправлено ' + lfm.count : '') + (lfmQ.length ? ' · в очереди ' + lfmQ.length : '') + '</p>' +
+        '<label class="switch"><input type="checkbox" id="lfm-love"' + (lfm.love ? ' checked' : '') + '><span></span>Отмечать «Любимые» сердечком на Last.fm</label>' +
+        '<div class="chips"><button class="chip" id="lfm-out">Выйти</button></div>';
+      return;
+    }
+    lcard.innerHTML = '<h3>Last.fm</h3><p class="hint">Отправляйте прослушанное в свой профиль Last.fm. Нужен бесплатный ключ API: создайте приложение на last.fm и вставьте сюда «API key» и «Shared secret».</p>' +
+      '<input class="search lfm-in" id="lfm-key" placeholder="API key" autocomplete="off" spellcheck="false" value="' + esc(lfm.key) + '">' +
+      '<input class="search lfm-in" id="lfm-secret" placeholder="Shared secret" autocomplete="off" spellcheck="false" value="' + esc(lfm.secret) + '">' +
+      (msg ? '<p class="hint">' + esc(msg) + '</p>' : '') +
+      '<div class="chips"><button class="chip" id="lfm-get">Получить ключ</button><button class="chip" id="lfm-in">Войти через Last.fm</button>' +
+      (lfmToken ? '<button class="chip" id="lfm-done">Я разрешил</button>' : '') + '</div>';
+  }
+  lcard.addEventListener('click', (e) => {
+    const id = e.target.id;
+    if (id === 'lfm-get') openExt('https://www.last.fm/api/account/create');
+    else if (id === 'lfm-in') lfmLogin();
+    else if (id === 'lfm-done') lfmSession();
+    else if (id === 'lfm-out') { lfm.sk = ''; lfm.user = ''; lfmSave(); lfmUI(); }
+  });
+  lcard.addEventListener('change', (e) => { if (e.target.id === 'lfm-love') { lfm.love = e.target.checked; lfmSave(); } });
+  lfmUI();
+  setTimeout(lfmFlush, 5000);
 
   // ---------- Фоновое воспроизведение: уведомление, экран блокировки, наушники ----------
   if (S.isAndroid && cap && cap.nativePromise) {

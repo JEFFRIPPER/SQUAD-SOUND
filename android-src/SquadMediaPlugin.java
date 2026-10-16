@@ -15,6 +15,13 @@ import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import com.getcapacitor.JSObject;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import org.json.JSONObject;
 
 @CapacitorPlugin(name = "SquadMedia")
@@ -77,6 +84,44 @@ public class SquadMediaPlugin extends Plugin {
         SquadMediaService s = SquadMediaService.instance;
         if (s != null) main.post(s::shutdown);
         call.resolve();
+    }
+
+    // POST формы для скробблинга Last.fm (WebView упирается в CORS). Только ws.audioscrobbler.com.
+    @PluginMethod
+    public void post(PluginCall call) {
+        String url = call.getString("url", "");
+        String body = call.getString("body", "");
+        if (!url.startsWith("https://ws.audioscrobbler.com/")) { call.reject("url"); return; }
+        new Thread(() -> {
+            HttpURLConnection c = null;
+            try {
+                c = (HttpURLConnection) new URL(url).openConnection();
+                c.setRequestMethod("POST");
+                c.setDoOutput(true);
+                c.setConnectTimeout(15000);
+                c.setReadTimeout(20000);
+                c.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=utf-8");
+                c.setRequestProperty("User-Agent", "SQUAD-SOUND");
+                try (OutputStream o = c.getOutputStream()) { o.write(body.getBytes(StandardCharsets.UTF_8)); }
+                int code = c.getResponseCode();
+                InputStream in = code >= 400 ? c.getErrorStream() : c.getInputStream();
+                ByteArrayOutputStream buf = new ByteArrayOutputStream();
+                if (in != null) {
+                    byte[] b = new byte[8192];
+                    int n;
+                    while ((n = in.read(b)) > 0) buf.write(b, 0, n);
+                    in.close();
+                }
+                JSObject r = new JSObject();
+                r.put("status", code);
+                r.put("body", buf.toString("UTF-8"));
+                call.resolve(r);
+            } catch (Throwable e) {
+                call.reject(String.valueOf(e.getMessage()));
+            } finally {
+                if (c != null) c.disconnect();
+            }
+        }).start();
     }
 
     private static Bitmap decode(String dataUrl) {

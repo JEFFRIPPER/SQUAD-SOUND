@@ -261,3 +261,4 @@ html.apk .sheet-list { display: flex; flex-direction: column; gap: 4px; margin-t
 html.apk .sheet-list button { display: flex; align-items: center; gap: 14px; padding: 14px 12px; border: 0; border-radius: 16px; background: transparent; color: var(--text); font: inherit; text-align: left; }
 html.apk .sheet-list button:active { background: var(--md-container-highest); }
 html.apk .sheet-list svg { width: 22px; height: 22px; fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; flex-shrink: 0; }
+html.apk .lfm-in { width: 100%; box-sizing: border-box; margin: 6px 0; font-family: ui-monospace, monospace; font-size: 13px; }
