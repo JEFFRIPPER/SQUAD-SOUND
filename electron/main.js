@@ -144,13 +144,21 @@ ipcMain.handle('read-range', async (_e, p, start, length) => {
   }
 });
 
+// Удаление трека с диска — только аудиофайлы и только в корзину, чтобы можно было вернуть
+ipcMain.handle('delete-file', async (_e, p) => {
+  if (typeof p !== 'string' || !AUDIO_RE.test(p)) throw new Error('Not an audio file');
+  if (!fs.existsSync(p)) return true;
+  await shell.trashItem(p);
+  return true;
+});
+
 ipcMain.handle('filter-existing', async (_e, paths) =>
   (Array.isArray(paths) ? paths : []).filter((p) => typeof p === 'string' && fs.existsSync(p)));
 
 ipcMain.handle('version', () => app.getVersion());
 
 ipcMain.handle('open-external', (_e, url) => {
-  if (/^https:\/\/github\.com\/JEFFRIPPER\/SQUAD-SOUND\//.test(url)) shell.openExternal(url);
+  if (/^https:\/\/github\.com\/JEFFRIPPER\/SQUAD-SOUND\//.test(url) || url === 'https://t.me/THKC_SQUAD') shell.openExternal(url);
 });
 
 // ---------- Автообновление (GitHub Releases) ----------

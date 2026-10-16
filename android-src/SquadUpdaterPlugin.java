@@ -137,7 +137,7 @@ public class SquadUpdaterPlugin extends Plugin {
     @PluginMethod
     public void openUrl(PluginCall call) {
         String url = call.getString("url", "");
-        if (!url.startsWith("https://github.com/JEFFRIPPER/SQUAD-SOUND")) { call.reject("bad url"); return; }
+        if (!url.startsWith("https://github.com/JEFFRIPPER/SQUAD-SOUND") && !url.equals("https://t.me/THKC_SQUAD")) { call.reject("bad url"); return; }
         Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         getContext().startActivity(i);

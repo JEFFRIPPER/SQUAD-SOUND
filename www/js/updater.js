@@ -8,6 +8,7 @@
 
   const REPO = 'JEFFRIPPER/SQUAD-SOUND';
   const GITHUB = 'https://github.com/' + REPO;
+  const TG_CHANNEL = 'https://t.me/THKC_SQUAD';
   const native = window.squadNative || null;
   const cap = window.Capacitor;
   const isAndroid = !!(cap && cap.getPlatform && cap.getPlatform() === 'android');
@@ -250,6 +251,7 @@
   $('update-panel').onclick = (e) => { if (e.target.id === 'update-panel') closePanel(); };
   $('up-github').onclick = () => openUrl(st.page);
   $('btn-github').onclick = () => openUrl(GITHUB);
+  $('btn-tg').onclick = $('btn-tg-card').onclick = () => openUrl(TG_CHANNEL);
 
   window.squadCheckUpdates = function (manual) {
     if (manual) {

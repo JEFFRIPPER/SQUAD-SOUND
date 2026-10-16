@@ -4,6 +4,10 @@ package com.squad.sound;
 // Вызывается из www/js/app.js через Capacitor.nativePromise('MusicScanner', ...).
 
 import android.Manifest;
+import android.app.Activity;
+import android.app.PendingIntent;
+import android.app.RecoverableSecurityException;
+import android.content.IntentSender;
 import android.content.ContentResolver;
 import android.content.ContentUris;
 import android.content.pm.PackageManager;
@@ -15,6 +19,9 @@ import android.os.Build;
 import android.provider.MediaStore;
 import android.util.Base64;
 import android.util.Size;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.IntentSenderRequest;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.core.content.ContextCompat;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -26,15 +33,90 @@ import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.util.Collections;
 
 @CapacitorPlugin(
     name = "MusicScanner",
     permissions = {
         @Permission(alias = "audio", strings = { "android.permission.READ_MEDIA_AUDIO" }),
         @Permission(alias = "storage", strings = { Manifest.permission.READ_EXTERNAL_STORAGE }),
+        @Permission(alias = "write", strings = { Manifest.permission.WRITE_EXTERNAL_STORAGE }),
     }
 )
 public class MusicScannerPlugin extends Plugin {
+
+    // ---------- Удаление файла трека ----------
+    private ActivityResultLauncher<IntentSenderRequest> deleteLauncher;
+    private PluginCall deleteCall;
+    private Uri deleteUri;
+    private boolean deleteRetry;
+
+    @Override
+    public void load() {
+        deleteLauncher = getActivity().registerForActivityResult(
+            new ActivityResultContracts.StartIntentSenderForResult(),
+            (res) -> onDeleteConfirmed(res.getResultCode() == Activity.RESULT_OK));
+    }
+
+    private void deleteDone(PluginCall call, boolean deleted) {
+        JSObject r = new JSObject();
+        r.put("deleted", deleted);
+        call.resolve(r);
+    }
+
+    @PluginMethod
+    public void deleteFile(PluginCall call) {
+        String s = call.getString("uri", "");
+        if (!s.startsWith("content://media/")) { call.reject("Это не файл из медиатеки"); return; }
+        Uri uri = Uri.parse(s);
+        if (Build.VERSION.SDK_INT >= 30) {
+            // Android 11+: система сама спрашивает «Удалить файл?»
+            PendingIntent pi = MediaStore.createDeleteRequest(getContext().getContentResolver(), Collections.singletonList(uri));
+            askDelete(call, uri, pi.getIntentSender(), false);
+            return;
+        }
+        if (Build.VERSION.SDK_INT <= 28 && getPermissionState("write") != com.getcapacitor.PermissionState.GRANTED) {
+            requestPermissionForAlias("write", call, "writeCallback");
+            return;
+        }
+        tryDelete(call, uri);
+    }
+
+    @PermissionCallback
+    private void writeCallback(PluginCall call) {
+        if (getPermissionState("write") != com.getcapacitor.PermissionState.GRANTED) { call.reject("Нет разрешения на удаление файлов"); return; }
+        tryDelete(call, Uri.parse(call.getString("uri", "")));
+    }
+
+    private void tryDelete(PluginCall call, Uri uri) {
+        try {
+            deleteDone(call, getContext().getContentResolver().delete(uri, null, null) > 0);
+        } catch (SecurityException e) {
+            // Android 10: чужой файл — нужно подтверждение пользователя
+            if (Build.VERSION.SDK_INT == 29 && e instanceof RecoverableSecurityException) {
+                askDelete(call, uri, ((RecoverableSecurityException) e).getUserAction().getActionIntent().getIntentSender(), true);
+            } else {
+                call.reject("Нет доступа к файлу");
+            }
+        }
+    }
+
+    private void askDelete(PluginCall call, Uri uri, IntentSender sender, boolean retry) {
+        if (deleteCall != null) deleteDone(deleteCall, false);
+        deleteCall = call;
+        deleteUri = uri;
+        deleteRetry = retry;
+        deleteLauncher.launch(new IntentSenderRequest.Builder(sender).build());
+    }
+
+    private void onDeleteConfirmed(boolean ok) {
+        PluginCall call = deleteCall;
+        deleteCall = null;
+        if (call == null) return;
+        if (!ok) { deleteDone(call, false); return; }
+        if (deleteRetry) tryDelete(call, deleteUri);
+        else deleteDone(call, true);
+    }
 
     private String perm() {
         return Build.VERSION.SDK_INT >= 33 ? "android.permission.READ_MEDIA_AUDIO" : Manifest.permission.READ_EXTERNAL_STORAGE;

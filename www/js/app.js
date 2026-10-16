@@ -183,6 +183,25 @@
     showMeta();
   }
 
+  // Удаление самого файла: Windows — в корзину, Android — системный запрос на удаление
+  const canDeleteFile = (t) => !!((t.path && native && native.deleteFile) || (t.uri && scanner));
+
+  async function deleteTrackFile(key) {
+    const t = byKey.get(key);
+    if (!t) return;
+    if (t.path && !confirm('Удалить файл «' + t.name + '» с компьютера? Он попадёт в корзину.')) return;
+    try {
+      let ok;
+      if (t.path) ok = await native.deleteFile(t.path);
+      else ok = (await scanner('deleteFile', { uri: t.uri })).deleted;
+      if (!ok) return; // отменили в системном окне
+      removeTrack(key, true);
+      toast('Файл удалён');
+    } catch (e) {
+      toast('Не удалось удалить файл: ' + ((e && e.message) || e));
+    }
+  }
+
   // ---------- Теги и обложки ----------
   async function sourceOf(t) {
     if (t.file) return SquadTags.fromBlob(t.file);
@@ -670,7 +689,8 @@
       view.tab === 'queue' && it.pos !== qpos ? { label: 'Убрать из очереди', act: () => removeFromQueue(it.pos) } : null,
       t.artist && !(view.tab === 'artists' && view.group) ? { label: 'Исполнитель: ' + t.artist, act: () => openLib('artists', t.artist) } : null,
       albumKey && !(view.tab === 'albums' && view.group) ? { label: 'Альбом: ' + t.album, act: () => openLib('albums', albumKey) } : null,
-      { label: 'Удалить из медиатеки', danger: true, act: () => removeTrack(t.key) },
+      canDeleteFile(t) ? { label: 'Удалить с устройства', danger: true, act: () => deleteTrackFile(t.key) } : null,
+      { label: 'Убрать из медиатеки', danger: !canDeleteFile(t), act: () => removeTrack(t.key) },
     ]);
   }
 
