@@ -1820,6 +1820,7 @@
       settings.eqPreset = 'custom'; saveSettings();
       syncEq(); syncFx(); saveFx();
     },
+    setFx(k, v) { engine.set(k, v); saveFx(); },
     pause: () => decks.forEach((d) => d.pause()),
     // включить список ключей с позиции i; shuffle — перемешать
     play(keys, i, shuffle) {

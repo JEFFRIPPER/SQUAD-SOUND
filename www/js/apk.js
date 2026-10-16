@@ -1239,6 +1239,23 @@
   const pcardS = document.createElement('div');
   pcardS.className = 'card';
   $('panel-eq').prepend(pcardS);
+
+  // ---------- Hi-Fi: звук мимо всей обработки ----------
+  const hcard = document.createElement('div');
+  hcard.className = 'card hifi-card';
+  pcardS.before(hcard);
+  const eng = window.squadEngine;
+  function hifiUI() {
+    const st = eng ? eng.state : {};
+    const on = !!(eng && (eng.ctx ? eng.hifi : st.hifi || eng._neutral())); // до первого трека графа ещё нет — считаем по настройкам
+    hcard.innerHTML = '<h3>Hi-Fi</h3><p class="hint">Максимальное качество: звук идёт прямо из файла, без эквалайзера, эффектов и лимитера. ' +
+      'Если эквалайзер ровный и эффекты выключены, так происходит само.</p>' +
+      '<label class="switch"><input type="checkbox" id="hifi-on"' + (st.hifi ? ' checked' : '') + '><span></span>Всегда без обработки</label>' +
+      '<p class="hifi-st' + (on ? ' on' : '') + '">' + (on ? '● Сейчас: чистый звук' : '○ Сейчас: идёт обработка (эквалайзер или эффекты)') + '</p>';
+  }
+  if (eng) eng.onroute = () => hifiUI();
+  hifiUI();
+  hcard.addEventListener('change', (e) => { if (e.target.id === 'hifi-on') { S.setFx('hifi', e.target.checked); hifiUI(); } });
   function presetsUI() {
     pcardS.innerHTML = '<h3>Мои пресеты</h3><p class="hint">Эквалайзер и эффекты целиком. Без ограничений по количеству.</p>' +
       (presets.length ? '<div class="chips">' + presets.map((x, i) => '<span class="chip pr-chip" data-pr="' + i + '">' + esc(x.name) +
