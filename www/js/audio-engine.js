@@ -114,7 +114,7 @@ registerProcessor('squad-pitch', SquadPitch);
       const ctx = new AC({ latencyHint: 'playback' });
       this.ctx = ctx;
       const n = {};
-      this.nodes = n;
+
 
       n.input = ctx.createGain();
       n.deckGain = this.decks.map((el, i) => {
@@ -199,6 +199,7 @@ registerProcessor('squad-pitch', SquadPitch);
       n.delay.connect(n.echoWet).connect(n.bus);
 
       n.bus.connect(n.pan);
+      this.nodes = n; // только когда все узлы готовы: apply() во время await addModule не трогает недостроенный граф
       this._routeLimiter();
 
       n.master.connect(n.analyser).connect(ctx.destination);
@@ -247,6 +248,7 @@ registerProcessor('squad-pitch', SquadPitch);
 
     _routeLimiter() {
       const n = this.nodes;
+      if (!n) return;
       try { n.pan.disconnect(); } catch (_) {}
       try { n.limiter.disconnect(); } catch (_) {}
       if (this.state.limiter) {
