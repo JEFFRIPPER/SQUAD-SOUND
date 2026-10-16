@@ -108,6 +108,27 @@
         else if (key === 'TRCK') res.no = res.no || parseInt(v, 10) || 0;
         else if (key === 'TPOS') res.disc = res.disc || parseInt(v, 10) || 0;
         else if (key === 'TYER' || key === 'TDRC') res.year = res.year || parseInt(v, 10) || 0;
+      } else if (key === 'USLT' && !res.lyrics && data.length > 5) {
+        // текст песни: кодировка, язык (3), описание, текст
+        const enc = data[0];
+        const o = strEnd(data, 4, enc) + strStep(enc);
+        const v = decodeText(enc, data.subarray(o)).replace(/\0+$/, '').trim();
+        if (v) res.lyrics = v;
+      } else if (key === 'SYLT' && !res.syncedLyrics && data.length > 7 && data[4] === 2) {
+        // синхронизированный текст (метки в миллисекундах) → LRC
+        const enc = data[0];
+        let o = strEnd(data, 6, enc) + strStep(enc);
+        const out = [];
+        while (o < data.length) {
+          const e = strEnd(data, o, enc);
+          if (e + strStep(enc) + 4 > data.length) break;
+          const text = decodeText(enc, data.subarray(o, e)).replace(/^\n/, '').trim();
+          const ms = u32be(data, e + strStep(enc));
+          o = e + strStep(enc) + 4;
+          const m = Math.floor(ms / 60000), sec = ((ms % 60000) / 1000).toFixed(2).padStart(5, '0');
+          out.push('[' + String(m).padStart(2, '0') + ':' + sec + ']' + text);
+        }
+        if (out.length) res.syncedLyrics = out.join('\n');
       } else if (key === 'APIC') {
         const enc = data[0];
         let o = 1, mime;
@@ -152,6 +173,9 @@
       else if (k === 'TRACKNUMBER') res.no = res.no || parseInt(v, 10) || 0;
       else if (k === 'DISCNUMBER') res.disc = res.disc || parseInt(v, 10) || 0;
       else if (k === 'DATE' || k === 'YEAR') res.year = res.year || parseInt(v, 10) || 0;
+      else if (k === 'LYRICS' || k === 'UNSYNCEDLYRICS' || k === 'SYNCEDLYRICS') {
+        if (/\[\d+:\d+/.test(v)) res.syncedLyrics = res.syncedLyrics || v; else res.lyrics = res.lyrics || v;
+      }
       else if (k === 'METADATA_BLOCK_PICTURE' && !res.picture) {
         try {
           const bin = atob(v);
@@ -272,6 +296,7 @@
         case '©day': res.year = res.year || parseInt(txt(), 10) || 0; break;
         case 'trkn': if (data.length >= 4) res.no = res.no || ((data[2] << 8) | data[3]); break;
         case 'disk': if (data.length >= 4) res.disc = res.disc || ((data[2] << 8) | data[3]); break;
+        case '©lyr': { const v = UTF8.decode(data).trim(); if (v && !res.lyrics) res.lyrics = v; break; }
         case 'covr':
           if (!res.picture) res.picture = { type: 3, mime: dtype === 14 ? 'image/png' : 'image/jpeg', data };
           break;
