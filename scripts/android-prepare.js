@@ -33,6 +33,8 @@ let m = fs.readFileSync(manifest, 'utf8');
 const perms = [
   '<uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />',
   '<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />',
+  // удаление треков на Android 9 и ниже (с 10-го — через системный запрос)
+  '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />',
   // обновление APK изнутри приложения
   '<uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />',
 ];
