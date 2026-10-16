@@ -184,6 +184,7 @@
       const t = byKey.get(key);
       if (!gone && (t.path || t.uri || t.tg)) hide.push(key);
       if (t.tg && window.SquadTG && !keepCache) SquadTG.uncache(key); // скачанный файл тоже удаляем
+      if (t.tg && t.tg.msg && window.SquadTG && SquadTG.forget) SquadTG.forget(key); // найденное в Telegram — из списка тоже
       if (t.web && window.SquadOnline) SquadOnline.remove(key);
       if (curTrack() === t) wasCurrent = true;
       byKey.delete(key);
@@ -405,7 +406,7 @@
     renderLib.vkey = vkey;
     document.querySelectorAll('#lib-tabs .chip').forEach((b) => b.classList.toggle('on', b.dataset.lib === tab));
     $('empty').classList.toggle('hidden', tracks.length > 0 || tab === 'playlists' || tab === 'telegram' || tab === 'online');
-    $('search').placeholder = tab === 'online' ? 'Найти трек в открытых источниках (Enter)' : 'Поиск по трекам';
+    $('search').placeholder = tab === 'online' ? (tgFind() ? 'Найти трек в Telegram и открытых источниках (Enter)' : 'Найти трек в открытых источниках (Enter)') : 'Поиск по трекам';
     const frag = document.createDocumentFragment();
     const cur = curTrack();
     items = [];
@@ -1451,7 +1452,9 @@
   // ---------- Онлайн: поиск в открытых источниках (js/online.js) ----------
   const WEB = window.SquadOnline || null;
   // q — запрос, results — найденное (null — показываем добавленные), page/more — подгрузка, busy/error
-  const onl = { q: '', results: null, page: 1, more: false, busy: false, error: '', adding: new Set() };
+  const onl = { q: '', results: null, page: 1, more: false, busy: false, error: '', adding: new Set(), webMore: false, tgNext: null };
+  // В APK онлайн-поиск идёт и по всему Telegram (каналы с музыкой), если вход выполнен. В .exe — как раньше.
+  function tgFind() { const tg = window.SquadTG; return !!(apkUI && tg && tg.search && tg.state.phase === 'ready'); }
 
   function webTrack(d) {
     const t = makeTrack(d.title || 'Трек', {});
@@ -1463,19 +1466,31 @@
   async function webSearch(q, more) {
     q = q.trim();
     if (!WEB || !q || onl.busy) return;
-    if (!more) Object.assign(onl, { q, results: [], page: 1, more: false });
+    if (!more) Object.assign(onl, { q, results: [], page: 1, more: false, webMore: true, tgNext: null });
     onl.busy = true; onl.error = '';
     renderLib();
     try {
-      const r = await WEB.search(q, more ? onl.page + 1 : 1);
+      // Telegram и открытые источники — параллельно; упал один — показываем другой
+      const useTg = tgFind() && (!more || onl.tgNext);
+      const useWeb = !more || onl.webMore;
+      const [tg, web] = await Promise.all([
+        useTg ? TG.search(q, more ? onl.tgNext : null).then((r) => r, (e) => ({ err: e })) : null,
+        useWeb ? WEB.search(q, more ? onl.page + 1 : 1).then((r) => r, (e) => ({ err: e })) : null,
+      ]);
       if (q !== onl.q) return;
-      if (more) onl.page++;
       const seen = new Set(onl.results.map((x) => x.key));
-      onl.results = onl.results.concat(r.results.filter((x) => !seen.has(x.key)));
-      onl.more = r.more;
+      const take = (list) => { onl.results = onl.results.concat(list.filter((x) => !seen.has(x.key) && seen.add(x.key))); };
+      if (tg && !tg.err) { take(tg.results); onl.tgNext = tg.next; } else if (tg) { console.warn('Поиск в Telegram:', tg.err); onl.tgNext = null; }
+      if (web && !web.err) { take(web.results); if (more) onl.page++; onl.webMore = web.more; } else if (web) { console.warn('Поиск онлайн:', web.err); onl.webMore = false; }
+      onl.more = !!onl.tgNext || onl.webMore;
+      const errs = [tg && tg.err, web && web.err].filter(Boolean);
+      if (errs.length && !onl.results.length) {
+        const m = String(errs[errs.length - 1].message || errs[errs.length - 1]);
+        onl.error = /HTTP 429/.test(m) ? 'Слишком много запросов, попробуйте через минуту' : 'Нет связи с сервисом поиска' + (/HTTP \d+/.test(m) ? ' (' + m.match(/HTTP \d+/)[0] + ')' : '');
+      }
     } catch (e) {
       console.warn('Поиск онлайн:', e);
-      onl.error = /HTTP 429/.test(e.message) ? 'Слишком много запросов, попробуйте через минуту' : 'Нет связи с сервисом поиска';
+      onl.error = 'Нет связи с сервисом поиска';
     } finally {
       onl.busy = false;
       if (view.tab === 'online') renderLib();
@@ -1484,8 +1499,9 @@
 
   // Добавить найденное в медиатеку; play — сразу включить
   async function webAdd(res, play) {
+    const group = (t) => (res.tg ? t.tg && t.tg.msg : t.web); // очередь — из таких же найденных треков
     if (byKey.has(res.key)) {
-      if (play) { const keys = tracks.filter((t) => t.web).map((t) => t.key); buildQueue(keys, keys.indexOf(res.key)); playAt(qpos); }
+      if (play) { const keys = tracks.filter(group).map((t) => t.key); buildQueue(keys, keys.indexOf(res.key)); playAt(qpos); }
       return;
     }
     if (onl.adding.has(res.key)) return;
@@ -1493,13 +1509,24 @@
     renderLib();
     toast('Скачиваю «' + res.title + '»…');
     try {
-      const d = await WEB.add(res);
-      addTracks([webTrack(d)], true);
+      let d;
+      if (res.tg) {
+        let last = -1;
+        d = await TG.add(res, (p) => { const pct = Math.floor(p * 100); if (pct - last >= 20) { last = pct; toast('Скачиваю «' + res.title + '»: ' + pct + '%'); } });
+        const t = tgTrack(d);
+        const h = store.get('hidden', []);
+        if (h.includes(d.key)) store.set('hidden', h.filter((k) => k !== d.key)); // удаляли раньше — теперь добавили снова
+        addTracks([t], true);
+        t.metaDone = false; loadMeta(t).then(() => scheduleRender()).catch(() => {}); // теги и обложка из файла
+      } else {
+        d = await WEB.add(res);
+        addTracks([webTrack(d)], true);
+      }
       toast('Добавлено: ' + res.title);
-      if (play) { const keys = tracks.filter((t) => t.web).map((t) => t.key); buildQueue(keys, keys.indexOf(d.key)); playAt(qpos); }
+      if (play) { const keys = tracks.filter(group).map((t) => t.key); buildQueue(keys, keys.indexOf(d.key)); playAt(qpos); }
     } catch (e) {
       console.warn('Скачивание:', e);
-      toast('Не скачалось: ' + res.title);
+      toast('Не скачалось: ' + res.title + (res.tg && TG ? ' (' + TG.errText(e) + ')' : ''));
     } finally {
       onl.adding.delete(res.key);
       if (view.tab === 'online') renderLib();
@@ -1531,7 +1558,8 @@
     tail.className = 'hint pad';
     if (onl.busy) tail.innerHTML = '<div class="tg-spin web-spin"></div>';
     else if (onl.error) tail.textContent = onl.error;
-    else if (!onl.results.length) tail.textContent = 'Ничего не нашлось. В открытых источниках в основном независимые исполнители, известных релизов из стримингов там нет.';
+    else if (!onl.results.length) tail.textContent = tgFind() ? 'Ничего не нашлось ни в Telegram, ни в открытых источниках. Попробуйте написать иначе: только исполнителя или только название.'
+      : 'Ничего не нашлось. В открытых источниках в основном независимые исполнители, известных релизов из стримингов там нет.' + (apkUI && TG && TG.configured ? ' Войдите в Telegram в медиатеке — тогда поиск пойдёт и по музыкальным каналам.' : '');
     else if (onl.more) tail.innerHTML = '<button class="btn" data-act="web-more">Показать ещё</button>';
     else tail.textContent = 'Это всё, что нашлось';
     frag.appendChild(tail);
@@ -1600,7 +1628,7 @@
       const list = await TG.sync();
       const hidden = new Set(store.get('hidden', []));
       const alive = new Set(list.map((d) => d.key));
-      tracks.filter((t) => t.tg && !alive.has(t.key)).forEach((t) => removeTrack(t.key, true));
+      tracks.filter((t) => t.tg && !t.tg.msg && !alive.has(t.key)).forEach((t) => removeTrack(t.key, true)); // найденное поиском не трогаем
       const added = addTracks(list.filter((d) => !hidden.has(d.key)).map(tgTrack), true);
       if (!quiet || added) toast(added ? 'Из профиля Telegram: ' + tracksWord(added) : 'Новых треков в профиле нет');
     } catch (e) {
