@@ -68,14 +68,20 @@ jobs:
       - run: npm ci
       - run: node scripts/set-version.js ${{ needs.version.outputs.version }}
       - name: Ключ подписи APK
-        # Постоянный ключ: иначе каждая сборка подписана новым ключом и не ставится поверх старой.
-        # Можно задать свой ключ в секрете ANDROID_KEYSTORE_B64 (alias androiddebugkey, пароль android).
+        # Постоянный ключ из секрета ANDROID_KEYSTORE_B64 (alias androiddebugkey, пароль android):
+        # без него каждая сборка подписана новым ключом и не ставится поверх старой.
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
         run: |
           mkdir -p ~/.android
-          if [ -n "$KEYSTORE_B64" ]; then echo "$KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
-          else cp signing/squad.keystore ~/.android/debug.keystore; fi
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            echo "::error::Нет секрета ANDROID_KEYSTORE_B64 — релизный APK нельзя подписать постоянным ключом"
+            exit 1
+          else
+            echo "::warning::Нет секрета ANDROID_KEYSTORE_B64 — тестовый APK подписан случайным ключом"
+          fi
       - name: Подготовка проекта Capacitor
         run: npm run android:prepare
         env:
