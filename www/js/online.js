@@ -81,7 +81,7 @@
 
   // → {results, more}
   async function search(q, page) {
-    const url = API + '?q=' + encodeURIComponent(q) + '&category=music&page_size=30&page=' + (page || 1);
+    const url = API + '?q=' + encodeURIComponent(q) + '&category=music&page_size=20&page=' + (page || 1);
     const r = await get(url, false);
     const results = (r.results || []).map(toResult).filter(Boolean);
     return { results, more: (r.page_count || 0) > (page || 1) };

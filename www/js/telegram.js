@@ -183,7 +183,7 @@
     pf.stop = true;
     try { await ensure(); await client.invoke(new G.Api.auth.LogOut()); } catch (_) {}
     await dropSession();
-    ls.set('tracks', null); ls.set('sources', null);
+    ls.set('tracks', null); ls.set('sources', null); ls.set('found', null);
     await cache.clear();
     set({ phase: 'idle', error: '', me: null });
   }
@@ -235,7 +235,87 @@
     return out;
   }
 
-  const saved = () => ls.get('tracks', []).filter((t) => t.tg && t.tg.doc); // старые треки из чатов больше не показываем
+  // профиль + найденное поиском по Telegram (found); старые треки из чатов (без doc) больше не показываем
+  const saved = () => ls.get('tracks', []).filter((t) => t.tg && t.tg.doc && !t.tg.msg).concat(ls.get('found', []));
+
+  // ---------- Поиск музыки по всему Telegram (публичные каналы и чаты) ----------
+  // Ответ messages.searchGlobal с фильтром «музыка». Трек помнит канал и сообщение — по ним файл и качаем
+  // (file_reference у документа живёт недолго, свежий берём из сообщения).
+  const peerOf = (m, chats, users) => {
+    const p = m.peerId;
+    if (p instanceof G.Api.PeerChannel) {
+      const c = chats.find((x) => x.id.toString() === p.channelId.toString());
+      return c && c.accessHash != null ? { t: 'c', id: c.id.toString(), h: c.accessHash.toString(), name: c.title || '' } : null;
+    }
+    if (p instanceof G.Api.PeerChat) {
+      const c = chats.find((x) => x.id.toString() === p.chatId.toString());
+      return { t: 'g', id: p.chatId.toString(), h: '0', name: (c && c.title) || '' };
+    }
+    if (p instanceof G.Api.PeerUser) {
+      const u = users.find((x) => x.id.toString() === p.userId.toString());
+      return u && u.accessHash != null ? { t: 'u', id: u.id.toString(), h: u.accessHash.toString(), name: [u.firstName, u.lastName].filter(Boolean).join(' ') } : null;
+    }
+    return null;
+  };
+  const inputPeer = (pe) => pe.t === 'c' ? new G.Api.InputPeerChannel({ channelId: G.bigInt(pe.id), accessHash: G.bigInt(pe.h) })
+    : pe.t === 'g' ? new G.Api.InputPeerChat({ chatId: G.bigInt(pe.id) })
+    : new G.Api.InputPeerUser({ userId: G.bigInt(pe.id), accessHash: G.bigInt(pe.h) });
+
+  // next — курсор из прошлого ответа ({rate, peer, id}); вернёт {results, next|null}
+  async function search(q, next) {
+    await ensure();
+    const r = await client.invoke(new G.Api.messages.SearchGlobal({
+      q: String(q || '').slice(0, 120),
+      filter: new G.Api.InputMessagesFilterMusic(),
+      minDate: 0, maxDate: 0,
+      offsetRate: (next && next.rate) || 0,
+      offsetPeer: next && next.peer ? inputPeer(next.peer) : new G.Api.InputPeerEmpty(),
+      offsetId: (next && next.id) || 0,
+      limit: 40,
+    }));
+    const msgs = (r && r.messages) || [], chats = (r && r.chats) || [], users = (r && r.users) || [];
+    const results = [], seenDoc = new Set();
+    let last = null;
+    for (const m of msgs) {
+      if (!(m instanceof G.Api.Message)) continue;
+      const pe = peerOf(m, chats, users);
+      if (pe) last = { rate: r.nextRate || m.date, peer: pe, id: m.id };
+      const t = m.media && m.media instanceof G.Api.MessageMediaDocument ? trackOf(m.media.document) : null;
+      if (!t || !pe || seenDoc.has(t.tg.doc)) continue; // один и тот же файл часто пересылают по разным каналам
+      seenDoc.add(t.tg.doc);
+      const where = pe.name || 'Telegram';
+      results.push(Object.assign(t, {
+        key: 'tg:doc:' + t.tg.doc, folder: 'Telegram/Поиск', source: 'Telegram', license: where,
+        tg: { doc: t.tg.doc, msg: m.id, peer: { t: pe.t, id: pe.id, h: pe.h } },
+      }));
+    }
+    const more = msgs.length >= 40 || (r instanceof G.Api.messages.MessagesSlice && r.count > msgs.length);
+    return { results, next: more && last ? last : null };
+  }
+
+  // Документ из сообщения канала/чата (свежий file_reference)
+  async function msgDoc(tg) {
+    await ensure();
+    const pe = tg.peer;
+    const r = pe.t === 'c'
+      ? await client.invoke(new G.Api.channels.GetMessages({ channel: new G.Api.InputChannel({ channelId: G.bigInt(pe.id), accessHash: G.bigInt(pe.h) }), id: [new G.Api.InputMessageID({ id: tg.msg })] }))
+      : await client.invoke(new G.Api.messages.GetMessages({ id: [new G.Api.InputMessageID({ id: tg.msg })] }));
+    const m = ((r && r.messages) || [])[0];
+    const d = m && m.media && m.media.document;
+    if (!d || d.id.toString() !== tg.doc) throw new Error('Сообщение с треком удалили');
+    return d;
+  }
+
+  // Добавить найденный трек: скачать в кэш и запомнить в списке found
+  async function add(res, onProgress) {
+    const t = { key: res.key, name: res.name, title: res.title, artist: res.artist, duration: res.duration, size: res.size, mime: res.mime, folder: res.folder, tg: res.tg };
+    await blob(t, onProgress);
+    const list = ls.get('found', []).filter((x) => x.key !== t.key);
+    list.push(t);
+    ls.set('found', list);
+    return t;
+  }
+  const forget = (key) => ls.set('found', ls.get('found', []).filter((x) => x.key !== key));
 
   // Скачать трек (или взять из кэша). onProgress(0..1); docs — уже полученный список документов профиля;
   // partKb — размер куска: 512 быстрее, 128 мельче грузит процессор расшифровкой (пока играет музыка)
@@ -245,7 +325,7 @@
     const p = (async () => {
       const hit = await cache.get(t.key);
       if (hit) return hit;
-      const doc = (docs || await profileDocs()).find((d) => d.id.toString() === t.tg.doc);
+      const doc = t.tg.msg ? await msgDoc(t.tg) : (docs || await profileDocs()).find((d) => d.id.toString() === t.tg.doc);
       if (!doc) throw new Error('Трека больше нет в профиле');
       const buf = await client.downloadMedia(doc, {
         partSizeKb: partKb || 512, // по умолчанию в GramJS 128 КБ за запрос — в 4 раза больше пауз между кусками
@@ -316,7 +396,7 @@
     state: st,
     on(cb) { subs.add(cb); return () => subs.delete(cb); },
     resume, login, submit, cancel, logout,
-    sync, saved, blob, prefetch,
+    sync, saved, blob, prefetch, search, add, forget,
     get prefetching() { return pf.run ? { done: pf.done, total: pf.total } : null; },
     cachedKeys,
     cached: async (key) => !!(await cache.get(key)),
