@@ -217,3 +217,14 @@ input[type=color] { width: 48px; height: 36px; border: 0; background: none; padd
 [data-theme="squad"] .track.playing { background: rgba(61, 9, 17, 0.7); }
 [data-theme="squad"] .brand-name b { text-shadow: none; }
 [data-theme="squad"] .brand-name { text-shadow: 0 0 18px rgba(255, 30, 60, 0.45); }
+
+/* ---------- Плашка обновления ---------- */
+.update-bar { position: fixed; left: 50%; top: calc(12px + var(--safe-top)); transform: translate(-50%, -150%); transition: transform .3s;
+  display: flex; align-items: center; gap: 10px; max-width: calc(100% - 24px); z-index: 70;
+  background: var(--card); border: 1px solid var(--accent); border-radius: 999px; padding: 6px 6px 6px 18px;
+  box-shadow: 0 8px 30px -8px var(--accent); }
+.update-bar.show { transform: translate(-50%, 0); }
+.update-bar span { font-weight: 600; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 820px) { .update-bar { width: calc(100% - 24px); } }
+.update-bar .icon-btn { width: 34px; height: 34px; }
+.about .btn { margin-top: 10px; }

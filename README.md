@@ -27,6 +27,14 @@ GitHub Actions собирает оба файла на каждый push и PR (
 | `SQUAD-SOUND-x.y.z-portable.exe` | Windows без установки |
 | `SQUAD-SOUND-x.y.z-android.apk` | Android 7.0+ (debug-подпись) |
 
+## Обновления по воздуху
+
+- Каждый push в `main` выпускает новую версию `1.0.<номер сборки>` в Releases.
+- **Windows (установщик)** сам скачивает новую версию через electron-updater и ставит её при перезапуске.
+- **Android и portable .exe** при запуске проверяют последний релиз и показывают кнопку «Скачать».
+- APK подписан постоянным ключом `signing/squad.keystore`, поэтому новые версии ставятся поверх старых.
+  Свой ключ можно задать секретом `ANDROID_KEYSTORE_B64` (alias `androiddebugkey`, пароль `android`).
+
 ## Локальная разработка
 
 ```bash

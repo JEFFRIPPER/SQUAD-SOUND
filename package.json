@@ -12,7 +12,8 @@
     "web": "npx --yes http-server www -p 8080 -c-1",
     "dist:win": "electron-builder --win --x64",
     "android:prepare": "node scripts/android-prepare.js",
-    "android:apk": "npm run android:prepare && cd android && ./gradlew assembleDebug"
+    "android:apk": "npm run android:prepare && cd android && ./gradlew assembleDebug",
+    "set-version": "node scripts/set-version.js"
   },
   "build": {
     "appId": "com.squad.sound",
@@ -53,16 +54,24 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "shortcutName": "SQUAD SOUND"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "JEFFRIPPER",
+        "repo": "SQUAD-SOUND"
+      }
+    ]
   },
   "devDependencies": {
+    "@capacitor/android": "^8.5.3",
     "@capacitor/assets": "^3.0.5",
     "@capacitor/cli": "^8.5.3",
+    "@capacitor/core": "^8.5.3",
     "electron": "^38.8.6",
     "electron-builder": "^26.15.3"
   },
   "dependencies": {
-    "@capacitor/android": "^8.5.3",
-    "@capacitor/core": "^8.5.3"
+    "electron-updater": "^6.8.9"
   }
 }
