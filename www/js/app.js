@@ -170,6 +170,7 @@
     if (!t) return;
     if (!gone && (t.path || t.uri || t.tg)) hideKeys([key]);
     if (t.tg && window.SquadTG) SquadTG.uncache(key); // скачанный файл тоже удаляем
+    if (t.web && window.SquadOnline) SquadOnline.remove(key);
     const wasCurrent = curTrack() === t;
     tracks = tracks.filter((x) => x !== t);
     byKey.delete(key);
@@ -206,6 +207,7 @@
   // ---------- Теги и обложки ----------
   async function sourceOf(t) {
     if (t.file) return SquadTags.fromBlob(t.file);
+    if (t.web) return SquadTags.fromBlob(await SquadOnline.blob(t.key));
     if (t.tg) {
       const b = await tgCachedBlob(t);
       return b ? SquadTags.fromBlob(b) : null;
@@ -342,7 +344,7 @@
       if (!pl) return [];
       return pl.keys.map((k, pos) => ({ t: byKey.get(k), pos })).filter((x) => x.t && matches(x.t, q));
     }
-    let list = tab === 'telegram' ? tracks.filter((t) => t.tg) : tracks;
+    let list = tab === 'telegram' ? tracks.filter((t) => t.tg) : tab === 'online' ? tracks.filter((t) => t.web) : tracks;
     if (GROUP_TABS[tab]) {
       list = tracks.filter((t) => (GROUP_TABS[tab].key(t) || '') === view.group).sort(inGroupSort[tab]);
     } else if (SORTS[settings.sort] && SORTS[settings.sort][1]) {
@@ -378,7 +380,8 @@
     ol.classList.toggle('md-enter', vkey !== renderLib.vkey);
     renderLib.vkey = vkey;
     document.querySelectorAll('#lib-tabs .chip').forEach((b) => b.classList.toggle('on', b.dataset.lib === tab));
-    $('empty').classList.toggle('hidden', tracks.length > 0 || tab === 'playlists' || tab === 'telegram');
+    $('empty').classList.toggle('hidden', tracks.length > 0 || tab === 'playlists' || tab === 'telegram' || tab === 'online');
+    $('search').placeholder = tab === 'online' ? 'Найти трек в открытых источниках (Enter)' : 'Поиск по трекам';
     const frag = document.createDocumentFragment();
     const cur = curTrack();
     items = [];
@@ -445,6 +448,7 @@
 
     // Telegram: вход, выбор чатов
     if (tab === 'telegram' && renderTg(ol, q)) return;
+    if (tab === 'online' && renderWeb(ol)) return;
 
     // Список треков
     items = viewItems(q);
@@ -457,6 +461,9 @@
         (total ? '<button class="btn" data-act="play-all">▶ Все</button><button class="btn" data-act="shuffle-all">⤮</button>' : ''));
     } else if (tab === 'telegram') {
       setHead(tgHead(total));
+    } else if (tab === 'online') {
+      setHead('<div class="lh-title">Онлайн <span class="lh-sub">' + tracksWord(total) + '</span></div>' +
+        (total ? '<button class="btn" data-act="play-all">▶</button><button class="btn" data-act="shuffle-all">⤮</button>' : ''));
     } else if (tab === 'queue') {
       setHead('<div class="lh-title">Очередь <span class="lh-sub">' + (qpos >= 0 ? (qpos + 1) + ' из ' : '') + queue.length + '</span></div>' +
         (queue.length > qpos + 1 ? '<button class="btn ghost" data-act="queue-clear">Очистить дальше</button>' : ''));
@@ -491,11 +498,13 @@
       li.querySelector('.t-artist').textContent = t.artist + (t.album && tab !== 'albums' ? ' · ' + t.album : '');
       frag.appendChild(li);
     });
-    if (!items.length && (tracks.length || tab === 'telegram')) {
+    if (!items.length && (tracks.length || tab === 'telegram' || tab === 'online')) {
       const li = document.createElement('li');
       li.className = 'hint pad';
-      li.textContent = q ? 'Ничего не найдено' : tab === 'telegram'
-        ? (tgBusy ? 'Ищу музыку в Telegram…' : 'Музыки не нашлось. Перешлите треки в «Избранное» или выберите чаты и каналы кнопкой «Чаты».') : tab === 'playlists' ? 'Плейлист пуст. Добавляйте треки через меню ⋮.' : 'Пусто';
+      li.textContent = tab === 'online' ? (q ? 'Нажмите Enter, чтобы искать «' + $('search').value.trim() + '» в открытых источниках'
+        : 'Введите название трека или исполнителя в поиске выше и нажмите Enter. Ищем по открытым источникам с лицензиями Creative Commons: Jamendo, Wikimedia, Freesound, ccMixter.')
+        : q ? 'Ничего не найдено' : tab === 'telegram'
+        ? (tgBusy ? 'Загружаю музыку из профиля…' : 'В профиле Telegram пока нет музыки. Добавьте песни в свой профиль в Telegram и нажмите ⟳.') : tab === 'playlists' ? 'Плейлист пуст. Добавляйте треки через меню ⋮.' : 'Пусто';
       frag.appendChild(li);
     }
     ol.appendChild(frag);
@@ -527,6 +536,7 @@
     const pl = playlists.find((p) => p.id === view.group);
     if (act === 'back') { view.group = null; renderLib(); }
     else if (act.startsWith('tg-')) tgAction(act);
+    else if (act === 'web-back') { onl.results = null; onl.q = ''; $('search').value = ''; renderLib(); }
     else if (act === 'play-all' || act === 'shuffle-all') {
       if (!items.length) return;
       if (act === 'shuffle-all' && !settings.shuffle) { settings.shuffle = true; syncModes(); saveSettings(); }
@@ -759,6 +769,7 @@
   async function srcFor(t) {
     if (t.file) return URL.createObjectURL(t.file);
     if (t.tg) return URL.createObjectURL(await tgBlob(t, t === curTrack()));
+    if (t.web) return URL.createObjectURL(await SquadOnline.blob(t.key));
     if (t.uri && cap && cap.convertFileSrc) {
       // content:// отдаём через локальный сервер Capacitor целиком: blob нормально перематывается
       const r = await fetch(cap.convertFileSrc(t.uri));
@@ -1355,10 +1366,119 @@
   $('btn-scan').onclick = () => scanDevice(true);
   $('auto-scan').onchange = (e) => { settings.autoScan = e.target.checked; saveSettings(); };
 
+  // ---------- Онлайн: поиск в открытых источниках (js/online.js) ----------
+  const WEB = window.SquadOnline || null;
+  // q — запрос, results — найденное (null — показываем добавленные), page/more — подгрузка, busy/error
+  const onl = { q: '', results: null, page: 1, more: false, busy: false, error: '', adding: new Set() };
+
+  function webTrack(d) {
+    const t = makeTrack(d.title || 'Трек', {});
+    t.title = d.title || t.title;
+    t.artist = d.artist || 'Неизвестный исполнитель';
+    return Object.assign(t, { key: d.key, folder: 'Онлайн/' + (d.source || 'Open'), web: { license: d.license, source: d.source } });
+  }
+
+  async function webSearch(q, more) {
+    q = q.trim();
+    if (!WEB || !q || onl.busy) return;
+    if (!more) Object.assign(onl, { q, results: [], page: 1, more: false });
+    onl.busy = true; onl.error = '';
+    renderLib();
+    try {
+      const r = await WEB.search(q, more ? onl.page + 1 : 1);
+      if (q !== onl.q) return;
+      if (more) onl.page++;
+      const seen = new Set(onl.results.map((x) => x.key));
+      onl.results = onl.results.concat(r.results.filter((x) => !seen.has(x.key)));
+      onl.more = r.more;
+    } catch (e) {
+      console.warn('Поиск онлайн:', e);
+      onl.error = /HTTP 429/.test(e.message) ? 'Слишком много запросов, попробуйте через минуту' : 'Нет связи с сервисом поиска';
+    } finally {
+      onl.busy = false;
+      if (view.tab === 'online') renderLib();
+    }
+  }
+
+  // Добавить найденное в медиатеку; play — сразу включить
+  async function webAdd(res, play) {
+    if (byKey.has(res.key)) {
+      if (play) { const keys = tracks.filter((t) => t.web).map((t) => t.key); buildQueue(keys, keys.indexOf(res.key)); playAt(qpos); }
+      return;
+    }
+    if (onl.adding.has(res.key)) return;
+    onl.adding.add(res.key);
+    renderLib();
+    toast('Скачиваю «' + res.title + '»…');
+    try {
+      const d = await WEB.add(res);
+      addTracks([webTrack(d)], true);
+      toast('Добавлено: ' + res.title);
+      if (play) { const keys = tracks.filter((t) => t.web).map((t) => t.key); buildQueue(keys, keys.indexOf(d.key)); playAt(qpos); }
+    } catch (e) {
+      console.warn('Скачивание:', e);
+      toast('Не скачалось: ' + res.title);
+    } finally {
+      onl.adding.delete(res.key);
+      if (view.tab === 'online') renderLib();
+    }
+  }
+
+  // Экран результатов поиска. true — отрисован
+  function renderWeb(ol) {
+    if (onl.results == null) return false;
+    setHead('<button class="icon-btn" data-act="web-back" title="Назад">‹</button>' +
+      '<div class="lh-title">«' + esc(onl.q) + '» <span class="lh-sub">' + (onl.busy && !onl.results.length ? 'ищу…' : 'найдено ' + onl.results.length) + '</span></div>');
+    const frag = document.createDocumentFragment();
+    onl.results.forEach((r, i) => {
+      const added = byKey.has(r.key), adding = onl.adding.has(r.key);
+      const li = document.createElement('li');
+      li.className = 'track web-res' + (added ? ' added' : '');
+      li.dataset.res = i;
+      li.innerHTML = '<div class="t-art"></div><div class="t-info"><div class="t-title"></div><div class="t-artist"></div></div>' +
+        '<button class="t-more web-add" title="' + (added ? 'Уже в медиатеке' : 'Добавить') + '">' + (adding ? '…' : added ? '✓' : '＋') + '</button>';
+      const art = li.querySelector('.t-art');
+      if (r.thumb) art.innerHTML = '<img loading="lazy" alt="" referrerpolicy="no-referrer">', art.firstChild.src = r.thumb;
+      else { const h = hueOf(r.artist + r.title); art.style.background = 'linear-gradient(135deg,hsl(' + h + ',70%,50%),hsl(' + ((h + 50) % 360) + ',80%,40%))'; art.textContent = (r.title[0] || '?').toUpperCase(); }
+      if (art.firstChild && art.firstChild.tagName === 'IMG') art.firstChild.onerror = () => { art.textContent = (r.title[0] || '?').toUpperCase(); };
+      li.querySelector('.t-title').textContent = r.title;
+      li.querySelector('.t-artist').textContent = [r.artist, r.duration ? fmt(r.duration) : '', r.source, r.license].filter(Boolean).join(' · ');
+      frag.appendChild(li);
+    });
+    const tail = document.createElement('li');
+    tail.className = 'hint pad';
+    if (onl.busy) tail.innerHTML = '<div class="tg-spin web-spin"></div>';
+    else if (onl.error) tail.textContent = onl.error;
+    else if (!onl.results.length) tail.textContent = 'Ничего не нашлось. В открытых источниках в основном независимые исполнители, известных релизов из стримингов там нет.';
+    else if (onl.more) tail.innerHTML = '<button class="btn" data-act="web-more">Показать ещё</button>';
+    else tail.textContent = 'Это всё, что нашлось';
+    frag.appendChild(tail);
+    ol.appendChild(frag);
+    return true;
+  }
+
+  $('search').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || view.tab !== 'online') return;
+    e.preventDefault();
+    webSearch($('search').value);
+    $('search').blur();
+  });
+  $('tracklist').addEventListener('click', (e) => {
+    const more = e.target.closest('[data-act="web-more"]');
+    if (more) { webSearch(onl.q, true); return; }
+    const row = e.target.closest('.web-res');
+    if (!row || !onl.results) return;
+    const r = onl.results[+row.dataset.res];
+    if (r) webAdd(r, !e.target.closest('.web-add'));
+  });
+
+  function webBoot() {
+    if (WEB) addTracks(WEB.saved().map(webTrack), true);
+  }
+
   // ---------- Telegram (js/telegram.js) ----------
   const TG = window.SquadTG || null;
   let tgBusy = false;       // идёт обновление списка
-  let tgPick = null;        // выбор чатов: {list: [...] | null, on: Set, error}
   let tgCard = null;        // {sig, el} — карточка входа (переиспользуем, чтобы не терять ввод)
 
   function tgTrack(d) {
@@ -1395,15 +1515,12 @@
     tgBusy = true;
     if (view.tab === 'telegram') renderLib();
     try {
-      const list = await TG.sync((title) => {
-        const el = document.querySelector('#lib-head .lh-sub');
-        if (el && view.tab === 'telegram') el.textContent = 'обновляю: ' + title + '…';
-      });
+      const list = await TG.sync();
       const hidden = new Set(store.get('hidden', []));
       const alive = new Set(list.map((d) => d.key));
       tracks.filter((t) => t.tg && !alive.has(t.key)).forEach((t) => removeTrack(t.key, true));
       const added = addTracks(list.filter((d) => !hidden.has(d.key)).map(tgTrack), true);
-      if (!quiet || added) toast(added ? 'Из Telegram: ' + tracksWord(added) : 'Новых треков в Telegram нет');
+      if (!quiet || added) toast(added ? 'Из профиля Telegram: ' + tracksWord(added) : 'Новых треков в профиле нет');
     } catch (e) {
       console.warn('Telegram:', e);
       if (!quiet) toast('Telegram: ' + TG.errText(e));
@@ -1418,8 +1535,8 @@
     return '<div class="lh-title">Telegram <span class="lh-sub">' +
       esc(tgBusy ? 'обновляю…' : (me ? me.name + ' · ' : '') + tracksWord(total)) + '</span></div>' +
       '<button class="icon-btn" data-act="tg-sync" title="Обновить"' + (tgBusy ? ' disabled' : '') + '>⟳</button>' +
-      '<button class="btn" data-act="tg-pick">Чаты</button>' +
-      (total ? '<button class="btn" data-act="play-all">▶</button><button class="btn" data-act="shuffle-all">⤮</button>' : '');
+      (total ? '<button class="btn" data-act="play-all">▶</button><button class="btn" data-act="shuffle-all">⤮</button>' : '') +
+      '<button class="btn ghost" data-act="tg-logout">Выйти</button>';
   }
 
   async function tgAction(act) {
@@ -1428,63 +1545,15 @@
     else if (act === 'tg-cancel') TG.cancel();
     else if (act === 'tg-logout') {
       if (!confirm('Выйти из Telegram? Треки из Telegram и скачанные файлы удалятся с устройства.')) return;
-      tgPick = null;
       tracks.filter((t) => t.tg).forEach((t) => removeTrack(t.key, true));
       await TG.logout();
-    } else if (act === 'tg-pick') {
-      tgPick = { list: null, on: new Set(TG.sources().map((s) => s.id)), error: '', peers: {} };
-      renderLib();
-      try { tgPick.list = await TG.dialogs(); }
-      catch (e) { tgPick.error = TG.errText(e); }
-      if (tgPick) renderLib();
-    } else if (act === 'tg-pick-done' && tgPick) {
-      const all = [TG.SAVED].concat(tgPick.list || []);
-      const chosen = all.filter((s) => tgPick.on.has(s.id));
-      // чаты, которые не успели загрузиться, оставляем как были
-      if (!tgPick.list) TG.sources().forEach((s) => { if (tgPick.on.has(s.id) && !chosen.some((c) => c.id === s.id)) chosen.push(s); });
-      TG.setSources(chosen);
-      tgPick = null;
-      renderLib();
-      tgSync(false);
-    } else if (act === 'tg-pick-cancel') { tgPick = null; renderLib(); }
+    }
   }
 
   // Экраны вкладки Telegram, кроме списка треков. true — экран отрисован
   function renderTg(ol, q) {
     const s = TG ? TG.state : { phase: 'off' };
-    if (s.phase === 'ready' && !tgPick) return false;
-
-    if (tgPick) {
-      setHead('<div class="lh-title">Чаты для музыки <span class="lh-sub">' + tgPick.on.size + ' выбрано</span></div>' +
-        '<button class="btn primary" data-act="tg-pick-done">Готово</button><button class="btn ghost" data-act="tg-pick-cancel">Отмена</button>');
-      const frag = document.createDocumentFragment();
-      const rows = [Object.assign({ kind: 'Ваши сохранённые сообщения' }, TG.SAVED)].concat(tgPick.list || []);
-      for (const d of rows) {
-        if (q && !d.title.toLowerCase().includes(q)) continue;
-        const li = document.createElement('li');
-        li.className = 'track tg-chat';
-        li.dataset.tgChat = d.id;
-        li.innerHTML = '<div class="t-art"></div><div class="t-info"><div class="t-title"></div><div class="t-artist"></div></div>' +
-          '<label class="switch"><input type="checkbox"><span></span></label>';
-        li.querySelector('.t-art').textContent = d.id === 'me' ? '★' : (d.title[0] || '?').toUpperCase();
-        li.querySelector('.t-title').textContent = d.title;
-        li.querySelector('.t-artist').textContent = d.kind;
-        li.querySelector('input').checked = tgPick.on.has(d.id);
-        frag.appendChild(li);
-      }
-      const hint = document.createElement('li');
-      hint.className = 'hint pad';
-      hint.textContent = tgPick.error ? 'Не загрузились чаты: ' + tgPick.error : tgPick.list ? 'Музыка берётся из выбранных чатов, групп и каналов' : 'Загружаю чаты…';
-      frag.appendChild(hint);
-      const me = TG.state.me;
-      const acc = document.createElement('li');
-      acc.className = 'tg-card tg-acc';
-      acc.innerHTML = '<p class="hint"></p><button class="btn ghost" type="button" data-act="tg-logout">Выйти из Telegram</button>';
-      acc.querySelector('p').textContent = me ? 'Вы вошли как ' + me.name + (me.phone ? ' (' + me.phone + ')' : '') : '';
-      frag.appendChild(acc);
-      ol.appendChild(frag);
-      return true;
-    }
+    if (s.phase === 'ready') return false;
 
     setHead('<div class="lh-title">Telegram</div>');
     const sig = s.phase + '\u0001' + s.error + '\u0001' + s.hint;
@@ -1493,7 +1562,7 @@
     li.className = 'tg-card';
     const steps = {
       off: ['Telegram недоступен', 'В этой сборке нет ключей Telegram. Обновите приложение.', ''],
-      idle: ['Музыка из Telegram', 'Войдите, чтобы слушать треки из «Избранного», чатов и каналов прямо в плеере, с эквалайзером и эффектами.',
+      idle: ['Музыка из Telegram', 'Войдите, чтобы слушать песни из своего профиля Telegram прямо в плеере, с эквалайзером и эффектами.',
         '<button class="btn primary" type="button" data-act="tg-login">Войти через Telegram</button>'],
       connecting: ['Подключаюсь к Telegram…', '', '<div class="tg-spin"></div>'],
       phone: ['Вход в Telegram', 'Номер телефона в международном формате.',
@@ -1546,14 +1615,6 @@
   $('tracklist').addEventListener('click', (e) => {
     const b = e.target.closest('.tg-card [data-act]');
     if (b) { tgAction(b.dataset.act); return; }
-    const row = e.target.closest('.tg-chat');
-    if (!row || !tgPick) return;
-    e.preventDefault();
-    const id = row.dataset.tgChat;
-    if (tgPick.on.has(id)) tgPick.on.delete(id); else tgPick.on.add(id);
-    row.querySelector('input').checked = tgPick.on.has(id);
-    const sub = document.querySelector('#lib-head .lh-sub');
-    if (sub) sub.textContent = tgPick.on.size + ' выбрано';
   });
 
   // ---------- Старт ----------
@@ -1582,6 +1643,7 @@
     $('auto-scan').checked = settings.autoScan;
     if (canScan && settings.autoScan) scanDevice(false);
     tgBoot();
+    webBoot();
     $('btn-check-update').onclick = () => window.squadCheckUpdates && window.squadCheckUpdates(true);
     renderLib();
     showMeta();

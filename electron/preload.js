@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('squadNative', {
   readRange: (p, start, length) => ipcRenderer.invoke('read-range', p, start, length),
   scanMusic: () => ipcRenderer.invoke('scan-music'),
   deleteFile: (p) => ipcRenderer.invoke('delete-file', p),
+  httpGet: (url, binary) => ipcRenderer.invoke('http-get', url, binary),
   filterExisting: (paths) => ipcRenderer.invoke('filter-existing', paths),
   version: () => ipcRenderer.invoke('version'),
   // Автообновление работает только в установленной версии (не portable)
