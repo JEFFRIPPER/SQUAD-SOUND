@@ -7,6 +7,8 @@
   'use strict';
 
   const G = window.GramJS;
+  // старый кэш схемы GramJS (без музыки профиля) — только занимает место, сборка читает свой ключ
+  try { localStorage.removeItem('GramJs:apiCache'); } catch (_) {}
   const cfg = window.SQUAD_TG || {};
   const API_ID = Number(cfg.apiId) || 0;
   const API_HASH = String(cfg.apiHash || '');
