@@ -348,6 +348,10 @@
     const tab = view.tab;
     const ol = $('tracklist');
     ol.innerHTML = '';
+    // анимация появления строк — только при смене вкладки/группы, а не на каждую перерисовку
+    const vkey = tab + '\u0002' + view.group;
+    ol.classList.toggle('md-enter', vkey !== renderLib.vkey);
+    renderLib.vkey = vkey;
     document.querySelectorAll('#lib-tabs .chip').forEach((b) => b.classList.toggle('on', b.dataset.lib === tab));
     $('empty').classList.toggle('hidden', tracks.length > 0 || tab === 'playlists');
     const frag = document.createDocumentFragment();

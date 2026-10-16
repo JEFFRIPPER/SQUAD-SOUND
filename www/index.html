@@ -23,6 +23,14 @@
         <button data-tab="themes" class="tab">Темы</button>
       </nav>
     </header>
+    <!-- Плашка «Доступно обновление» -->
+    <div class="update-banner" id="update-banner" role="button">
+      <div class="ub-icon"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg></div>
+      <div class="ub-text"><div class="ub-title" id="ub-title"></div><div class="ub-sub" id="ub-sub"></div></div>
+      <button class="btn primary ub-btn" id="ub-btn">ОБНОВИТЬ</button>
+      <button class="icon-btn ub-close" id="ub-close" title="Скрыть">✕</button>
+      <div class="ub-progress" id="ub-progress"></div>
+    </div>
 
     <main class="layout">
       <!-- ===== Библиотека ===== -->
@@ -152,10 +160,17 @@
           <p class="hint">Акцент подстраивается под обложку, которая сейчас играет. Если у трека нет обложки, остаётся цвет темы.</p>
         </div>
         <div class="card about">
-          <h3>О приложении</h3>
+          <h3>Обновления</h3>
           <p><b>SQUAD SOUND</b> <span id="app-version"></span></p>
+          <p class="hint" id="upd-status"></p>
+          <div class="row wrap">
+            <button class="btn primary" id="btn-check-update">Проверить обновления</button>
+            <button class="btn" id="btn-github">Открыть GitHub</button>
+          </div>
+        </div>
+        <div class="card about">
+          <h3>О приложении</h3>
           <label class="switch hidden" id="auto-scan-row"><input type="checkbox" id="auto-scan"><span></span>Искать музыку на устройстве при запуске</label>
-          <button class="btn" id="btn-check-update">Проверить обновления</button>
           <p class="hint">Пробел — пауза, ←/→ — перемотка, Ctrl+←/→ — трек назад/вперёд.</p>
         </div>
       </section>
@@ -172,7 +187,7 @@
           <div class="artist" id="np-artist">Добавьте треки</div>
         </div>
         <div class="seek">
-          <input type="range" id="seek" min="0" max="1000" value="0">
+          <input type="range" id="seek" min="0" max="1000" value="0" style="--p:0%">
           <div class="times"><span id="t-cur">0:00</span><span id="t-dur">0:00</span></div>
         </div>
         <div class="controls">
@@ -213,10 +228,22 @@
         <svg viewBox="0 0 24 24" class="ic-pause"><path d="M7 4h3v16H7zM14 4h3v16h-3z"/></svg></button>
       <button class="icon-btn" id="mini-next"><svg viewBox="0 0 24 24"><path d="m5 4 10 8-10 8V4zM19 5v14"/></svg></button>
     </div>
-    <div class="update-bar" id="update-bar">
-      <span id="update-text"></span>
-      <button class="btn primary hidden" id="update-btn"></button>
-      <button class="icon-btn" id="update-close" title="Закрыть">✕</button>
+    <!-- Панель обновления -->
+    <div class="update-panel" id="update-panel">
+      <div class="up-sheet" id="up-sheet">
+        <div class="up-handle"></div>
+        <button class="icon-btn up-close" id="up-close" title="Закрыть">✕</button>
+        <img src="img/squad-logo.jpg" alt="" class="up-logo">
+        <h3>Обновление SQUAD SOUND</h3>
+        <div class="up-versions"><span id="up-cur"></span><span id="up-arrow">→</span><b id="up-new"></b></div>
+        <p class="up-status" id="up-status"></p>
+        <p class="up-notes hidden" id="up-notes"></p>
+        <div class="up-bar hidden" id="up-bar"><i id="up-bar-fill"></i></div>
+        <button class="btn primary up-main" id="up-main"></button>
+        <button class="btn up-github" id="up-github">
+          <svg viewBox="0 0 24 24"><path d="M9 19c-4 1.5-4-2-6-2.5M15 21v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12 12 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"/></svg>
+          Открыть на GitHub</button>
+      </div>
     </div>
     <div class="menu" id="menu"></div>
     <div class="dialog-wrap" id="dialog">
@@ -241,5 +268,6 @@
   <script src="js/themes.js"></script>
   <script src="js/app.js"></script>
   <script src="js/updater.js"></script>
+  <script src="js/md3.js"></script>
 </body>
 </html>
