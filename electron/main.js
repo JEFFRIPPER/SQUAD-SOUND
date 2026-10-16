@@ -152,6 +152,16 @@ ipcMain.handle('delete-file', async (_e, p) => {
   return true;
 });
 
+// Сеть для поиска в открытых источниках: из главного процесса нет ограничений CORS
+ipcMain.handle('http-get', async (_e, url, binary) => {
+  if (typeof url !== 'string' || new URL(url).protocol !== 'https:') throw new Error('Only https');
+  const r = await net.fetch(url, { headers: { 'User-Agent': 'SQUAD-SOUND/' + app.getVersion() } });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  if (!binary) return r.text();
+  if (+(r.headers.get('content-length') || 0) > 300 * 1024 * 1024) throw new Error('Файл слишком большой');
+  return Buffer.from(await r.arrayBuffer());
+});
+
 ipcMain.handle('filter-existing', async (_e, paths) =>
   (Array.isArray(paths) ? paths : []).filter((p) => typeof p === 'string' && fs.existsSync(p)));
 

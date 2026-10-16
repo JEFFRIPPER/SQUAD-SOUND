@@ -580,3 +580,18 @@ input[type=range]::-moz-range-thumb { width: 20px; height: 20px; border: 0; back
 .tg-chat .switch { margin-left: auto; pointer-events: none; }
 .tg-acc { flex-direction: column; align-items: center; gap: 8px; padding-top: 4px; }
 .tg-acc .hint { margin: 0; }
+
+/* ---------- Полосы прокрутки под тему (вместо системных со стрелками) ---------- */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--accent) 32%, transparent); border-radius: 999px;
+  border: 3px solid transparent; background-clip: padding-box; min-height: 40px; }
+::-webkit-scrollbar-thumb:hover { background-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+::-webkit-scrollbar-thumb:active { background-color: var(--accent); }
+
+/* ---------- Онлайн-поиск ---------- */
+.web-res .web-add { font-size: 20px; color: var(--accent); }
+.web-res.added .web-add { color: var(--muted); }
+.web-res .t-art img { width: 100%; height: 100%; object-fit: cover; }
+.web-spin { margin: 0 auto; }
