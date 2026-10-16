@@ -237,9 +237,10 @@
 
   const saved = () => ls.get('tracks', []).filter((t) => t.tg && t.tg.doc); // старые треки из чатов больше не показываем
 
-  // Скачать трек (или взять из кэша). onProgress(0..1); docs — уже полученный список документов профиля
+  // Скачать трек (или взять из кэша). onProgress(0..1); docs — уже полученный список документов профиля;
+  // partKb — размер куска: 512 быстрее, 128 мельче грузит процессор расшифровкой (пока играет музыка)
   const loading = new Map();
-  function blob(t, onProgress, docs) {
+  function blob(t, onProgress, docs, partKb) {
     if (loading.has(t.key)) return loading.get(t.key);
     const p = (async () => {
       const hit = await cache.get(t.key);
@@ -247,7 +248,7 @@
       const doc = (docs || await profileDocs()).find((d) => d.id.toString() === t.tg.doc);
       if (!doc) throw new Error('Трека больше нет в профиле');
       const buf = await client.downloadMedia(doc, {
-        partSizeKb: 512, // по умолчанию 128 КБ за запрос — в 4 раза больше пауз между кусками
+        partSizeKb: partKb || 512, // по умолчанию в GramJS 128 КБ за запрос — в 4 раза больше пауз между кусками
         progressCallback: (got, total) => { if (onProgress) onProgress(Number(total) ? Number(got) / Number(total) : 0); },
       });
       if (!buf || !buf.length) throw new Error('Пустой файл');
@@ -264,9 +265,12 @@
 
   // Фоновая загрузка всех треков профиля в кэш: PF_WORKERS файлов одновременно, список документов — один раз.
   // onStep(done, total, track) после каждого трека. Повторный вызов во время работы ничего не делает.
+  // busy() → true, пока играет музыка: тогда качаем в один поток мелкими кусками с паузами,
+  // иначе расшифровка в JS отнимает процессор у звука и в наушниках щёлкает.
   const PF_WORKERS = 4;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const pf = { run: null, stop: false, done: 0, total: 0 };
-  function prefetch(list, onStep) {
+  function prefetch(list, onStep, busy) {
     if (pf.run) return pf.run;
     pf.stop = false;
     pf.run = (async () => {
@@ -278,17 +282,21 @@
       let docs = profileDocs();
       // ссылки на файлы устарели — один перезапрос списка на всех, даже если упали сразу несколько потоков
       const refresh = (old) => { if (docs === old) docs = profileDocs().catch(() => old); return docs; };
-      const worker = async () => {
+      const quiet = () => { try { return !!(busy && busy()); } catch (_) { return false; } };
+      const worker = async (_, wi) => {
         while (!pf.stop && !full && st.phase === 'ready' && next < todo.length) {
+          const calm = quiet();
+          if (calm) { await sleep(wi ? 3000 : 1500); if (wi) continue; } // играет музыка — работает только первый поток
+          if (pf.stop || full || st.phase !== 'ready' || next >= todo.length) break;
           const t = todo[next++];
           const mine = docs;
           try {
-            await blob(t, null, await mine);
+            await blob(t, null, await mine, calm ? 128 : 512);
             ok++;
           } catch (e) {
             const m = (e && (e.errorMessage || e.message)) || '';
             if (/FILE_REFERENCE/.test(m)) {
-              try { await blob(t, null, await refresh(mine)); ok++; } catch (_) {}
+              try { await blob(t, null, await refresh(mine), calm ? 128 : 512); ok++; } catch (_) {}
             } else if (/quota|QuotaExceeded/i.test(m + (e && e.name))) full = true; // память кончилась
           }
           pf.done++;

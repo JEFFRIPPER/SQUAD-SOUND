@@ -1091,7 +1091,19 @@
       else if (a === 'next') S.step(1);
       else if (a === 'prev') S.step(-1);
       else if (a === 'seek' && e.pos >= 0) S.seek(e.pos);
+      else if (a === 'noisy') { if (S.playing()) S.pause(); }
+      else if (a === 'route') reopenOutput();
     });
+    // Новый выход звука (наушники): перезапускаем вывод Web Audio, чтобы он открылся с параметрами нового устройства
+    let routeT = 0;
+    function reopenOutput() {
+      clearTimeout(routeT);
+      routeT = setTimeout(() => {
+        const c = window.squadEngine && window.squadEngine.ctx;
+        if (!c || c.state !== 'running') return;
+        c.suspend().then(() => setTimeout(() => c.resume().catch(() => {}), 150)).catch(() => {});
+      }, 400);
+    }
   }
 
   // ---------- Итоги месяца (истории в духе Wrapped, из локальной статистики) ----------

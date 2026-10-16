@@ -89,6 +89,10 @@ registerProcessor('squad-pitch', SquadPitch);
     constructor(audioEl, audioEl2) {
       this.decks = [audioEl, audioEl2].filter(Boolean);
       this.active = 0;
+      // Экономный граф (APK): реверб, эхо и сдвиг тона подключаются только когда включены.
+      // На телефоне свёртка 2,5-секундного реверба и worklet даже «на нуле» съедают поток звука —
+      // при нагрузке (загрузки Telegram) он не успевает и в наушниках слышны щелчки.
+      this.lean = false;
       this.ctx = null;
       this.ready = null;
       this.state = {
@@ -184,22 +188,22 @@ registerProcessor('squad-pitch', SquadPitch);
       n.analyser.smoothingTimeConstant = 0.8;
 
       // Сборка графа
-      let head = n.input;
-      if (n.pitch) { head.connect(n.pitch); head = n.pitch; }
-      head.connect(n.preamp);
+      n.pitchOn = null;
+      if (n.pitch) n.pitch.connect(n.preamp);
       let prev = n.preamp;
       for (const b of n.eq) { prev.connect(b); prev = b; }
       prev.connect(n.bass);
       n.bass.connect(n.split);
 
       n.merge.connect(n.dry).connect(n.bus);
-      n.merge.connect(n.convolver).connect(n.reverbWet).connect(n.bus);
-      n.merge.connect(n.delay);
+      n.convolver.connect(n.reverbWet).connect(n.bus);
       n.delay.connect(n.feedback).connect(n.delay);
       n.delay.connect(n.echoWet).connect(n.bus);
+      n.revOn = false; n.echoOn = false; n.offT = {};
+      this.nodes = n;
+      this._routePitch(); // ветки реверба и эха подключит applyAll() ниже
 
       n.bus.connect(n.pan);
-      this.nodes = n; // только когда все узлы готовы: apply() во время await addModule не трогает недостроенный граф
       this._routeLimiter();
 
       n.master.connect(n.analyser).connect(ctx.destination);
@@ -244,6 +248,35 @@ registerProcessor('squad-pitch', SquadPitch);
         try { g.gain.setValueCurveAtTime(curve, t + 0.005, seconds); }
         catch (_) { g.gain.setValueAtTime(on ? 1 : 0, t); }
       });
+    }
+
+    // pitch-worklet в цепи только когда тон сдвинут (или всегда, если граф не экономный)
+    _routePitch() {
+      const n = this.nodes;
+      if (!n) return;
+      const on = !!n.pitch && (!this.lean || Math.abs(this.state.pitch) > 1e-3);
+      if (on === n.pitchOn) return;
+      n.pitchOn = on;
+      try { n.input.disconnect(); } catch (_) {}
+      n.input.connect(on ? n.pitch : n.preamp);
+    }
+
+    // Подключить/отключить ветку эффекта (реверб, эхо) от общей шины.
+    // Выключаем с задержкой: сначала гаснет громкость ветки, потом рвём связь — без щелчка.
+    _wet(key, node, on) {
+      const n = this.nodes;
+      if (!this.lean) on = true;
+      clearTimeout(n.offT[key]);
+      const flag = key + 'On';
+      if (on) {
+        if (!n[flag]) { n.merge.connect(node); n[flag] = true; }
+        return;
+      }
+      if (!n[flag]) return;
+      n.offT[key] = setTimeout(() => {
+        try { n.merge.disconnect(node); } catch (_) {}
+        n[flag] = false;
+      }, key === 'echo' ? 4000 : 400); // у эха хвост из обратной связи — даём ему затихнуть
     }
 
     _routeLimiter() {
@@ -301,6 +334,7 @@ registerProcessor('squad-pitch', SquadPitch);
           }
           if (n && n.pitch) {
             n.pitch.parameters.get('ratio').value = Math.pow(2, s.pitch / 12);
+            this._routePitch();
           }
           break;
         }
@@ -330,10 +364,11 @@ registerProcessor('squad-pitch', SquadPitch);
           break;
         case 'reverb': case 'reverbMix': case 'reverbSize': {
           if (!n) break;
-          if (this._lastIr !== s.reverbSize) {
+          if (this._lastIr !== s.reverbSize && (!this.lean || s.reverbMix > 0)) {
             n.convolver.buffer = makeImpulse(this.ctx, s.reverbSize, 2.5 + s.reverbSize);
             this._lastIr = s.reverbSize;
           }
+          this._wet('rev', n.convolver, s.reverbMix > 0);
           smooth(n.reverbWet.gain, s.reverbMix * 1.4);
           smooth(n.dry.gain, 1 - s.reverbMix * 0.35);
           break;
@@ -342,6 +377,7 @@ registerProcessor('squad-pitch', SquadPitch);
           if (!n) break;
           smooth(n.delay.delayTime, s.echoTime);
           smooth(n.feedback.gain, Math.min(s.echoFeedback, 0.9));
+          this._wet('echo', n.delay, s.echoMix > 0);
           smooth(n.echoWet.gain, s.echoMix);
           break;
         case 'eightD': case 'eightDSpeed':
