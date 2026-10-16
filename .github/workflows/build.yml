@@ -1,0 +1,94 @@
+name: Сборка .exe и .apk
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Windows (.exe)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Сборка установщика и portable
+        run: npx electron-builder --win --x64 --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SQUAD-SOUND-windows
+          path: dist/*.exe
+          if-no-files-found: error
+
+  android:
+    name: Android (.apk)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      - name: Подготовка проекта Capacitor
+        run: npm run android:prepare
+        env:
+          VERSION_CODE: ${{ github.run_number }}
+      - name: Сборка APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+      - name: Переименование
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          mkdir -p dist
+          cp android/app/build/outputs/apk/debug/app-debug.apk "dist/SQUAD-SOUND-${VERSION}-android.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SQUAD-SOUND-android
+          path: dist/*.apk
+          if-no-files-found: error
+
+  release:
+    name: Релиз на GitHub
+    if: github.event_name == 'push'
+    needs: [windows, android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Версия
+        id: v
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=v$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.v.outputs.tag }}
+          name: SQUAD SOUND ${{ steps.v.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          files: out/*
+          body: |
+            **Windows:** `SQUAD-SOUND-…-win-x64-nsis.exe` — установщик, `…-portable.exe` — без установки.
+            **Android:** `SQUAD-SOUND-…-android.apk` — установите, разрешив установку из неизвестных источников.

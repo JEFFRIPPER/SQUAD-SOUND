@@ -1,0 +1,8 @@
+{
+  "appId": "com.squad.sound",
+  "appName": "SQUAD SOUND",
+  "webDir": "www",
+  "android": {
+    "backgroundColor": "#0b0b10"
+  }
+}

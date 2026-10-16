@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="ru" data-theme="squad">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#0b0b10">
+  <title>SQUAD SOUND</title>
+  <link rel="icon" href="icon.svg">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <img src="icon.svg" alt="" class="brand-logo">
+        <span class="brand-name">SQUAD<b>SOUND</b></span>
+      </div>
+      <nav class="tabs" id="tabs">
+        <button data-tab="player" class="tab only-mobile">Плеер</button>
+        <button data-tab="library" class="tab active">Треки</button>
+        <button data-tab="eq" class="tab">Эквалайзер</button>
+        <button data-tab="fx" class="tab">Эффекты</button>
+        <button data-tab="themes" class="tab">Темы</button>
+      </nav>
+    </header>
+
+    <main class="layout">
+      <!-- ===== Библиотека ===== -->
+      <section class="panel" id="panel-library">
+        <div class="lib-actions">
+          <button class="btn primary" id="btn-add-files">＋ Файлы</button>
+          <button class="btn" id="btn-add-folder">＋ Папка</button>
+          <input class="search" id="search" type="search" placeholder="Поиск по трекам">
+          <button class="btn ghost" id="btn-clear" title="Очистить список">Очистить</button>
+        </div>
+        <input type="file" id="file-input" accept="audio/*,.mp3,.flac,.wav,.ogg,.m4a,.aac,.opus,.wma" multiple hidden>
+        <input type="file" id="folder-input" webkitdirectory multiple hidden>
+        <div class="empty" id="empty">
+          <div class="empty-icon">♫</div>
+          <p>Добавьте музыку кнопками выше<br>или перетащите файлы в окно.</p>
+        </div>
+        <ol class="tracklist" id="tracklist"></ol>
+      </section>
+
+      <!-- ===== Эквалайзер ===== -->
+      <section class="panel hidden" id="panel-eq">
+        <div class="row between">
+          <label class="switch"><input type="checkbox" id="eq-on"><span></span>Эквалайзер</label>
+          <select id="eq-preset" class="select"></select>
+        </div>
+        <div class="eq-wrap">
+          <div class="eq-band preamp">
+            <span class="eq-val" id="preamp-val">0</span>
+            <input type="range" class="vslider" id="preamp" min="-12" max="12" step="0.5" value="0">
+            <span class="eq-freq">Пред.</span>
+          </div>
+          <div class="eq-bands" id="eq-bands"></div>
+        </div>
+        <button class="btn ghost" id="eq-reset">Сбросить эквалайзер</button>
+      </section>
+
+      <!-- ===== Эффекты ===== -->
+      <section class="panel hidden" id="panel-fx">
+        <div class="fx-presets" id="fx-presets"></div>
+
+        <div class="card">
+          <h3>Скорость и тон</h3>
+          <div class="ctrl"><label>Скорость <b id="speed-val"></b></label>
+            <input type="range" id="speed" min="0.5" max="2" step="0.01"></div>
+          <div class="ctrl"><label>Тон <b id="pitch-val"></b></label>
+            <input type="range" id="pitch" min="-12" max="12" step="0.5"></div>
+          <label class="switch"><input type="checkbox" id="vinyl"><span></span>Винил: тон вместе со скоростью</label>
+          <p class="hint" id="pitch-hint"></p>
+        </div>
+
+        <div class="card">
+          <h3>Реверберация</h3>
+          <div class="ctrl"><label>Количество <b id="reverbMix-val"></b></label>
+            <input type="range" id="reverbMix" min="0" max="1" step="0.01"></div>
+          <div class="ctrl"><label>Размер зала <b id="reverbSize-val"></b></label>
+            <input type="range" id="reverbSize" min="0.3" max="8" step="0.1"></div>
+        </div>
+
+        <div class="card">
+          <h3>Эхо</h3>
+          <div class="ctrl"><label>Количество <b id="echoMix-val"></b></label>
+            <input type="range" id="echoMix" min="0" max="1" step="0.01"></div>
+          <div class="ctrl"><label>Задержка <b id="echoTime-val"></b></label>
+            <input type="range" id="echoTime" min="0.05" max="1.5" step="0.01"></div>
+          <div class="ctrl"><label>Повторы <b id="echoFeedback-val"></b></label>
+            <input type="range" id="echoFeedback" min="0" max="0.9" step="0.01"></div>
+        </div>
+
+        <div class="card">
+          <h3>Пространство</h3>
+          <div class="ctrl"><label>Усиление баса <b id="bass-val"></b></label>
+            <input type="range" id="bass" min="0" max="15" step="0.5"></div>
+          <div class="ctrl"><label>Стерео-ширина <b id="width-val"></b></label>
+            <input type="range" id="width" min="0" max="2" step="0.01"></div>
+          <div class="ctrl"><label>Баланс <b id="balance-val"></b></label>
+            <input type="range" id="balance" min="-1" max="1" step="0.01"></div>
+          <label class="switch"><input type="checkbox" id="eightD"><span></span>8D-звук (вращение)</label>
+          <div class="ctrl"><label>Скорость вращения <b id="eightDSpeed-val"></b></label>
+            <input type="range" id="eightDSpeed" min="0.03" max="1" step="0.01"></div>
+          <label class="switch"><input type="checkbox" id="limiter"><span></span>Лимитер (защита от перегруза)</label>
+        </div>
+
+        <div class="card">
+          <h3>Таймер сна</h3>
+          <div class="chips" id="sleep-chips">
+            <button data-min="0" class="chip">Выкл</button>
+            <button data-min="15" class="chip">15 мин</button>
+            <button data-min="30" class="chip">30 мин</button>
+            <button data-min="45" class="chip">45 мин</button>
+            <button data-min="60" class="chip">1 час</button>
+            <button data-min="90" class="chip">1,5 часа</button>
+          </div>
+          <p class="hint" id="sleep-hint"></p>
+        </div>
+
+        <button class="btn ghost" id="fx-reset">Сбросить все эффекты</button>
+      </section>
+
+      <!-- ===== Темы ===== -->
+      <section class="panel hidden" id="panel-themes">
+        <div class="themes" id="themes"></div>
+        <div class="card">
+          <h3>Свой акцент</h3>
+          <div class="row">
+            <input type="color" id="accent-color">
+            <button class="btn ghost" id="accent-reset">Как в теме</button>
+          </div>
+        </div>
+        <div class="card about">
+          <h3>О приложении</h3>
+          <p><b>SQUAD SOUND</b> <span id="app-version"></span></p>
+          <p class="hint">Пробел — пауза, ←/→ — перемотка, Ctrl+←/→ — трек назад/вперёд.</p>
+        </div>
+      </section>
+
+      <!-- ===== Сейчас играет ===== -->
+      <aside class="now" id="panel-player">
+        <div class="cover" id="cover">
+          <canvas id="viz"></canvas>
+          <div class="cover-letter" id="cover-letter">S</div>
+        </div>
+        <div class="meta">
+          <div class="title" id="np-title">Ничего не играет</div>
+          <div class="artist" id="np-artist">Добавьте треки</div>
+        </div>
+        <div class="seek">
+          <input type="range" id="seek" min="0" max="1000" value="0">
+          <div class="times"><span id="t-cur">0:00</span><span id="t-dur">0:00</span></div>
+        </div>
+        <div class="controls">
+          <button class="icon-btn" id="btn-shuffle" title="Перемешать">
+            <svg viewBox="0 0 24 24"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg></button>
+          <button class="icon-btn" id="btn-prev" title="Назад">
+            <svg viewBox="0 0 24 24"><path d="M19 20 9 12l10-8v16zM5 19V5"/></svg></button>
+          <button class="play-btn" id="btn-play" title="Играть">
+            <svg viewBox="0 0 24 24" class="ic-play"><path d="M7 4v16l13-8z"/></svg>
+            <svg viewBox="0 0 24 24" class="ic-pause"><path d="M7 4h3v16H7zM14 4h3v16h-3z"/></svg></button>
+          <button class="icon-btn" id="btn-next" title="Вперёд">
+            <svg viewBox="0 0 24 24"><path d="m5 4 10 8-10 8V4zM19 5v14"/></svg></button>
+          <button class="icon-btn" id="btn-repeat" title="Повтор">
+            <svg viewBox="0 0 24 24"><path d="m17 2 4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4M21 13v2a3 3 0 0 1-3 3H3"/></svg>
+            <i class="badge" id="repeat-one">1</i></button>
+        </div>
+        <div class="volume">
+          <svg viewBox="0 0 24 24"><path d="M11 5 6 9H2v6h4l5 4V5zM15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/></svg>
+          <input type="range" id="volume" min="0" max="1" step="0.01">
+        </div>
+        <div class="quick" id="quick">
+          <span id="q-speed"></span><span id="q-pitch"></span><span id="q-fx"></span>
+        </div>
+      </aside>
+    </main>
+
+    <!-- мини-плеер для телефона -->
+    <div class="mini" id="mini">
+      <div class="mini-progress" id="mini-progress"></div>
+      <div class="mini-meta"><div class="title" id="mini-title">—</div><div class="artist" id="mini-artist"></div></div>
+      <button class="icon-btn" id="mini-play">
+        <svg viewBox="0 0 24 24" class="ic-play"><path d="M7 4v16l13-8z"/></svg>
+        <svg viewBox="0 0 24 24" class="ic-pause"><path d="M7 4h3v16H7zM14 4h3v16h-3z"/></svg></button>
+      <button class="icon-btn" id="mini-next"><svg viewBox="0 0 24 24"><path d="m5 4 10 8-10 8V4zM19 5v14"/></svg></button>
+    </div>
+    <div class="drop" id="drop">Отпустите, чтобы добавить</div>
+    <div class="toast" id="toast"></div>
+  </div>
+
+  <audio id="audio" preload="auto"></audio>
+  <script>window.SQUAD_VERSION = "1.0.0";</script>
+  <script src="js/audio-engine.js"></script>
+  <script src="js/themes.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,65 @@
+{
+  "name": "squad-sound",
+  "productName": "SQUAD SOUND",
+  "version": "1.0.0",
+  "description": "SQUAD SOUND — музыкальный плеер Сквада с эффектами: тон, скорость, реверб, эхо, 8D, эквалайзер, темы",
+  "author": "SQUAD",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "web": "npx --yes http-server www -p 8080 -c-1",
+    "dist:win": "electron-builder --win --x64",
+    "android:prepare": "node scripts/android-prepare.js",
+    "android:apk": "npm run android:prepare && cd android && ./gradlew assembleDebug"
+  },
+  "build": {
+    "appId": "com.squad.sound",
+    "productName": "SQUAD SOUND",
+    "artifactName": "SQUAD-SOUND-${version}-${os}-${arch}-${target}.${ext}",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**",
+      "www/**",
+      "build/icon.png",
+      "package.json"
+    ],
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "SQUAD SOUND"
+    }
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^8.5.3",
+    "electron": "^38.8.6",
+    "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/core": "^8.5.3"
+  }
+}
