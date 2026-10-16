@@ -558,3 +558,25 @@ input[type=range]::-moz-range-thumb { width: 20px; height: 20px; border: 0; back
   background: color-mix(in srgb, var(--bg) 97%, transparent);
   backdrop-filter: blur(18px) saturate(1.3); -webkit-backdrop-filter: blur(18px) saturate(1.3); }
 @media (max-width: 820px) { .lib-actions { margin: -6px -14px 10px; padding: 10px 14px 8px; } }
+
+/* ---------- Telegram ---------- */
+.tg-card { list-style: none; display: flex; justify-content: center; padding: 18px 4px 28px; }
+.tg-form { width: min(420px, 100%); display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center;
+  background: var(--md-container, var(--card)); border-radius: 28px; padding: 28px 22px 22px;
+  animation: md-fade-through var(--md-medium, 300ms) var(--md-ease-decel, ease-out); }
+.tg-form h3 { margin: 0; font-size: 20px; }
+.tg-form .hint { margin: 0; font-size: 13px; line-height: 1.45; }
+.tg-form .search { width: 100%; flex: none; text-align: center; font-size: 18px; letter-spacing: .04em; }
+.tg-form .row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+.tg-logo { display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.tg-logo svg { width: 32px; height: 32px; fill: currentColor; margin-left: -3px; }
+.tg-err { margin: 0; color: #ff6b7d; font-size: 13px; font-weight: 600; }
+.tg-spin { width: 36px; height: 36px; border-radius: 50%; border: 3px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-top-color: var(--accent); animation: tg-spin .9s linear infinite; }
+@keyframes tg-spin { to { transform: rotate(360deg); } }
+.tg-chat .t-art { display: grid; place-items: center; font-weight: 700; color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.tg-chat .switch { margin-left: auto; pointer-events: none; }
+.tg-acc { flex-direction: column; align-items: center; gap: 8px; padding-top: 4px; }
+.tg-acc .hint { margin: 0; }

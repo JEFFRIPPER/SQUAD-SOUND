@@ -40,6 +40,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: node scripts/set-version.js ${{ needs.version.outputs.version }}
+      - name: Ключи Telegram
+        run: node scripts/set-tg-config.js
+        env:
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
       - name: Сборка установщика и portable
         run: npx electron-builder --win --x64 --publish never
       - uses: actions/upload-artifact@v4
@@ -67,6 +72,11 @@ jobs:
           java-version: 21
       - run: npm ci
       - run: node scripts/set-version.js ${{ needs.version.outputs.version }}
+      - name: Ключи Telegram
+        run: node scripts/set-tg-config.js
+        env:
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
       - name: Ключ подписи APK
         # Постоянный ключ из секрета ANDROID_KEYSTORE_B64 (alias androiddebugkey, пароль android):
         # без него каждая сборка подписана новым ключом и не ставится поверх старой.

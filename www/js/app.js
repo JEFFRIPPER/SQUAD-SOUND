@@ -168,7 +168,8 @@
   function removeTrack(key, gone) {
     const t = byKey.get(key);
     if (!t) return;
-    if (!gone && (t.path || t.uri)) hideKeys([key]);
+    if (!gone && (t.path || t.uri || t.tg)) hideKeys([key]);
+    if (t.tg && window.SquadTG) SquadTG.uncache(key); // скачанный файл тоже удаляем
     const wasCurrent = curTrack() === t;
     tracks = tracks.filter((x) => x !== t);
     byKey.delete(key);
@@ -205,6 +206,10 @@
   // ---------- Теги и обложки ----------
   async function sourceOf(t) {
     if (t.file) return SquadTags.fromBlob(t.file);
+    if (t.tg) {
+      const b = await tgCachedBlob(t);
+      return b ? SquadTags.fromBlob(b) : null;
+    }
     if (t.path && native && native.readRange) {
       const first = await native.readRange(t.path, 0, 65536);
       const head = new Uint8Array(first.data);
@@ -248,6 +253,7 @@
         if (ci) Object.assign(m, ci);
       }
       const src = t.uri ? null : await sourceOf(t);
+      if (!src && t.tg) { t.metaDone = true; return; } // теги прочитаем после скачивания
       if (src) {
         const tags = await SquadTags.read(src);
         for (const k of ['title', 'artist', 'album', 'albumArtist', 'genre', 'year', 'no', 'disc']) if (tags[k]) m[k] = tags[k];
@@ -336,11 +342,11 @@
       if (!pl) return [];
       return pl.keys.map((k, pos) => ({ t: byKey.get(k), pos })).filter((x) => x.t && matches(x.t, q));
     }
-    let list = tracks;
+    let list = tab === 'telegram' ? tracks.filter((t) => t.tg) : tracks;
     if (GROUP_TABS[tab]) {
       list = tracks.filter((t) => (GROUP_TABS[tab].key(t) || '') === view.group).sort(inGroupSort[tab]);
     } else if (SORTS[settings.sort] && SORTS[settings.sort][1]) {
-      list = tracks.slice().sort(SORTS[settings.sort][1]);
+      list = list.slice().sort(SORTS[settings.sort][1]);
     }
     return list.filter((t) => matches(t, q)).map((t, pos) => ({ t, pos }));
   }
@@ -372,7 +378,7 @@
     ol.classList.toggle('md-enter', vkey !== renderLib.vkey);
     renderLib.vkey = vkey;
     document.querySelectorAll('#lib-tabs .chip').forEach((b) => b.classList.toggle('on', b.dataset.lib === tab));
-    $('empty').classList.toggle('hidden', tracks.length > 0 || tab === 'playlists');
+    $('empty').classList.toggle('hidden', tracks.length > 0 || tab === 'playlists' || tab === 'telegram');
     const frag = document.createDocumentFragment();
     const cur = curTrack();
     items = [];
@@ -437,6 +443,9 @@
       return;
     }
 
+    // Telegram: вход, выбор чатов
+    if (tab === 'telegram' && renderTg(ol, q)) return;
+
     // Список треков
     items = viewItems(q);
     const reorder = !q && (tab === 'queue' || tab === 'playlists');
@@ -446,6 +455,8 @@
         '<select class="select" id="sort-sel">' + Object.entries(SORTS).map(([k, [n]]) =>
           '<option value="' + k + '"' + (k === settings.sort ? ' selected' : '') + '>' + n + '</option>').join('') + '</select>' +
         (total ? '<button class="btn" data-act="play-all">▶ Все</button><button class="btn" data-act="shuffle-all">⤮</button>' : ''));
+    } else if (tab === 'telegram') {
+      setHead(tgHead(total));
     } else if (tab === 'queue') {
       setHead('<div class="lh-title">Очередь <span class="lh-sub">' + (qpos >= 0 ? (qpos + 1) + ' из ' : '') + queue.length + '</span></div>' +
         (queue.length > qpos + 1 ? '<button class="btn ghost" data-act="queue-clear">Очистить дальше</button>' : ''));
@@ -480,10 +491,11 @@
       li.querySelector('.t-artist').textContent = t.artist + (t.album && tab !== 'albums' ? ' · ' + t.album : '');
       frag.appendChild(li);
     });
-    if (!items.length && tracks.length) {
+    if (!items.length && (tracks.length || tab === 'telegram')) {
       const li = document.createElement('li');
       li.className = 'hint pad';
-      li.textContent = q ? 'Ничего не найдено' : tab === 'playlists' ? 'Плейлист пуст. Добавляйте треки через меню ⋮.' : 'Пусто';
+      li.textContent = q ? 'Ничего не найдено' : tab === 'telegram'
+        ? (tgBusy ? 'Ищу музыку в Telegram…' : 'Музыки не нашлось. Перешлите треки в «Избранное» или выберите чаты и каналы кнопкой «Чаты».') : tab === 'playlists' ? 'Плейлист пуст. Добавляйте треки через меню ⋮.' : 'Пусто';
       frag.appendChild(li);
     }
     ol.appendChild(frag);
@@ -514,6 +526,7 @@
     const act = b.dataset.act;
     const pl = playlists.find((p) => p.id === view.group);
     if (act === 'back') { view.group = null; renderLib(); }
+    else if (act.startsWith('tg-')) tgAction(act);
     else if (act === 'play-all' || act === 'shuffle-all') {
       if (!items.length) return;
       if (act === 'shuffle-all' && !settings.shuffle) { settings.shuffle = true; syncModes(); saveSettings(); }
@@ -689,6 +702,7 @@
       view.tab === 'queue' && it.pos !== qpos ? { label: 'Убрать из очереди', act: () => removeFromQueue(it.pos) } : null,
       t.artist && !(view.tab === 'artists' && view.group) ? { label: 'Исполнитель: ' + t.artist, act: () => openLib('artists', t.artist) } : null,
       albumKey && !(view.tab === 'albums' && view.group) ? { label: 'Альбом: ' + t.album, act: () => openLib('albums', albumKey) } : null,
+      t.tg ? { label: 'Скачать на устройство', act: () => tgDownload(t) } : null,
       canDeleteFile(t) ? { label: 'Удалить с устройства', danger: true, act: () => deleteTrackFile(t.key) } : null,
       { label: 'Убрать из медиатеки', danger: !canDeleteFile(t), act: () => removeTrack(t.key) },
     ]);
@@ -744,6 +758,7 @@
 
   async function srcFor(t) {
     if (t.file) return URL.createObjectURL(t.file);
+    if (t.tg) return URL.createObjectURL(await tgBlob(t, t === curTrack()));
     if (t.uri && cap && cap.convertFileSrc) {
       // content:// отдаём через локальный сервер Capacitor целиком: blob нормально перематывается
       const r = await fetch(cap.convertFileSrc(t.uri));
@@ -1340,6 +1355,207 @@
   $('btn-scan').onclick = () => scanDevice(true);
   $('auto-scan').onchange = (e) => { settings.autoScan = e.target.checked; saveSettings(); };
 
+  // ---------- Telegram (js/telegram.js) ----------
+  const TG = window.SquadTG || null;
+  let tgBusy = false;       // идёт обновление списка
+  let tgPick = null;        // выбор чатов: {list: [...] | null, on: Set, error}
+  let tgCard = null;        // {sig, el} — карточка входа (переиспользуем, чтобы не терять ввод)
+
+  function tgTrack(d) {
+    const t = makeTrack(d.name, {});
+    if (d.title) t.title = d.title;
+    if (d.artist) t.artist = d.artist;
+    return Object.assign(t, { key: d.key, folder: d.folder, tg: d.tg, mime: d.mime, size: d.size });
+  }
+
+  async function tgCachedBlob(t) {
+    return TG && (await TG.cached(t.key)) ? TG.blob(t) : null;
+  }
+
+  // Скачать трек из Telegram (из кэша — сразу). show — показывать прогресс
+  async function tgBlob(t, show) {
+    let last = -1;
+    const fresh = !(await TG.cached(t.key));
+    const b = await TG.blob(t, (p) => {
+      const pct = Math.floor(p * 100);
+      if (show && pct !== last && (pct - last >= 5 || pct === 100)) { last = pct; toast('Загрузка из Telegram: ' + pct + '%'); }
+    });
+    if (fresh) { t.metaDone = false; loadMeta(t).then(() => scheduleRender()); } // теги и обложка из файла
+    return b;
+  }
+
+  async function tgDownload(t) {
+    if (await TG.cached(t.key)) { toast('Уже скачан'); return; }
+    try { await tgBlob(t, true); toast('Скачано: ' + t.title); }
+    catch (e) { toast('Не скачалось: ' + TG.errText(e)); }
+  }
+
+  async function tgSync(quiet) {
+    if (!TG || tgBusy || TG.state.phase !== 'ready') return;
+    tgBusy = true;
+    if (view.tab === 'telegram') renderLib();
+    try {
+      const list = await TG.sync((title) => {
+        const el = document.querySelector('#lib-head .lh-sub');
+        if (el && view.tab === 'telegram') el.textContent = 'обновляю: ' + title + '…';
+      });
+      const hidden = new Set(store.get('hidden', []));
+      const alive = new Set(list.map((d) => d.key));
+      tracks.filter((t) => t.tg && !alive.has(t.key)).forEach((t) => removeTrack(t.key, true));
+      const added = addTracks(list.filter((d) => !hidden.has(d.key)).map(tgTrack), true);
+      if (!quiet || added) toast(added ? 'Из Telegram: ' + tracksWord(added) : 'Новых треков в Telegram нет');
+    } catch (e) {
+      console.warn('Telegram:', e);
+      if (!quiet) toast('Telegram: ' + TG.errText(e));
+    } finally {
+      tgBusy = false;
+      if (view.tab === 'telegram') renderLib();
+    }
+  }
+
+  function tgHead(total) {
+    const me = TG.state.me;
+    return '<div class="lh-title">Telegram <span class="lh-sub">' +
+      esc(tgBusy ? 'обновляю…' : (me ? me.name + ' · ' : '') + tracksWord(total)) + '</span></div>' +
+      '<button class="icon-btn" data-act="tg-sync" title="Обновить"' + (tgBusy ? ' disabled' : '') + '>⟳</button>' +
+      '<button class="btn" data-act="tg-pick">Чаты</button>' +
+      (total ? '<button class="btn" data-act="play-all">▶</button><button class="btn" data-act="shuffle-all">⤮</button>' : '');
+  }
+
+  async function tgAction(act) {
+    if (act === 'tg-sync') tgSync(false);
+    else if (act === 'tg-login') TG.login();
+    else if (act === 'tg-cancel') TG.cancel();
+    else if (act === 'tg-logout') {
+      if (!confirm('Выйти из Telegram? Треки из Telegram и скачанные файлы удалятся с устройства.')) return;
+      tgPick = null;
+      tracks.filter((t) => t.tg).forEach((t) => removeTrack(t.key, true));
+      await TG.logout();
+    } else if (act === 'tg-pick') {
+      tgPick = { list: null, on: new Set(TG.sources().map((s) => s.id)), error: '', peers: {} };
+      renderLib();
+      try { tgPick.list = await TG.dialogs(); }
+      catch (e) { tgPick.error = TG.errText(e); }
+      if (tgPick) renderLib();
+    } else if (act === 'tg-pick-done' && tgPick) {
+      const all = [TG.SAVED].concat(tgPick.list || []);
+      const chosen = all.filter((s) => tgPick.on.has(s.id));
+      // чаты, которые не успели загрузиться, оставляем как были
+      if (!tgPick.list) TG.sources().forEach((s) => { if (tgPick.on.has(s.id) && !chosen.some((c) => c.id === s.id)) chosen.push(s); });
+      TG.setSources(chosen);
+      tgPick = null;
+      renderLib();
+      tgSync(false);
+    } else if (act === 'tg-pick-cancel') { tgPick = null; renderLib(); }
+  }
+
+  // Экраны вкладки Telegram, кроме списка треков. true — экран отрисован
+  function renderTg(ol, q) {
+    const s = TG ? TG.state : { phase: 'off' };
+    if (s.phase === 'ready' && !tgPick) return false;
+
+    if (tgPick) {
+      setHead('<div class="lh-title">Чаты для музыки <span class="lh-sub">' + tgPick.on.size + ' выбрано</span></div>' +
+        '<button class="btn primary" data-act="tg-pick-done">Готово</button><button class="btn ghost" data-act="tg-pick-cancel">Отмена</button>');
+      const frag = document.createDocumentFragment();
+      const rows = [Object.assign({ kind: 'Ваши сохранённые сообщения' }, TG.SAVED)].concat(tgPick.list || []);
+      for (const d of rows) {
+        if (q && !d.title.toLowerCase().includes(q)) continue;
+        const li = document.createElement('li');
+        li.className = 'track tg-chat';
+        li.dataset.tgChat = d.id;
+        li.innerHTML = '<div class="t-art"></div><div class="t-info"><div class="t-title"></div><div class="t-artist"></div></div>' +
+          '<label class="switch"><input type="checkbox"><span></span></label>';
+        li.querySelector('.t-art').textContent = d.id === 'me' ? '★' : (d.title[0] || '?').toUpperCase();
+        li.querySelector('.t-title').textContent = d.title;
+        li.querySelector('.t-artist').textContent = d.kind;
+        li.querySelector('input').checked = tgPick.on.has(d.id);
+        frag.appendChild(li);
+      }
+      const hint = document.createElement('li');
+      hint.className = 'hint pad';
+      hint.textContent = tgPick.error ? 'Не загрузились чаты: ' + tgPick.error : tgPick.list ? 'Музыка берётся из выбранных чатов, групп и каналов' : 'Загружаю чаты…';
+      frag.appendChild(hint);
+      const me = TG.state.me;
+      const acc = document.createElement('li');
+      acc.className = 'tg-card tg-acc';
+      acc.innerHTML = '<p class="hint"></p><button class="btn ghost" type="button" data-act="tg-logout">Выйти из Telegram</button>';
+      acc.querySelector('p').textContent = me ? 'Вы вошли как ' + me.name + (me.phone ? ' (' + me.phone + ')' : '') : '';
+      frag.appendChild(acc);
+      ol.appendChild(frag);
+      return true;
+    }
+
+    setHead('<div class="lh-title">Telegram</div>');
+    const sig = s.phase + '\u0001' + s.error + '\u0001' + s.hint;
+    if (tgCard && tgCard.sig === sig) { ol.appendChild(tgCard.el); return true; }
+    const li = document.createElement('li');
+    li.className = 'tg-card';
+    const steps = {
+      off: ['Telegram недоступен', 'В этой сборке нет ключей Telegram. Обновите приложение.', ''],
+      idle: ['Музыка из Telegram', 'Войдите, чтобы слушать треки из «Избранного», чатов и каналов прямо в плеере, с эквалайзером и эффектами.',
+        '<button class="btn primary" type="button" data-act="tg-login">Войти через Telegram</button>'],
+      connecting: ['Подключаюсь к Telegram…', '', '<div class="tg-spin"></div>'],
+      phone: ['Вход в Telegram', 'Номер телефона в международном формате.',
+        '<input class="search" name="v" type="tel" inputmode="tel" autocomplete="tel" placeholder="+7 900 000-00-00" required>'],
+      code: ['Код подтверждения', s.viaApp ? 'Код пришёл в Telegram на другом устройстве (чат «Telegram»).' : 'Код отправлен по SMS.',
+        '<input class="search" name="v" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="Код" required>'],
+      password: ['Облачный пароль', 'На аккаунте включена двухэтапная проверка.' + (s.hint ? ' Подсказка: ' + esc(s.hint) : ''),
+        '<input class="search" name="v" type="password" autocomplete="current-password" placeholder="Пароль" required>'],
+    };
+    const [title, text, body] = steps[s.phase] || steps.idle;
+    const isForm = ['phone', 'code', 'password'].includes(s.phase);
+    li.innerHTML = '<form class="tg-form" novalidate><div class="tg-logo">' + $('btn-tg').innerHTML + '</div><h3></h3><p class="hint tg-text"></p>' +
+      (s.error ? '<p class="tg-err"></p>' : '') + body +
+      (isForm ? '<div class="row"><button class="btn primary" type="submit">Далее</button>' +
+        '<button class="btn ghost" type="button" data-act="tg-cancel">Отмена</button></div>' : '') +
+      (s.phase === 'idle' ? '<p class="hint">Вход идёт напрямую в Telegram, номер и код никуда больше не передаются.</p>' : '') +
+      '</form>';
+    li.querySelector('h3').textContent = title;
+    li.querySelector('.tg-text').innerHTML = text;
+    if (s.error) li.querySelector('.tg-err').textContent = s.error;
+    tgCard = { sig, el: li };
+    ol.appendChild(li);
+    const input = li.querySelector('input');
+    if (input) setTimeout(() => input.focus(), 50);
+    return true;
+  }
+
+  function tgBoot() {
+    if (!TG) return;
+    if (TG.configured) {
+      const hidden = new Set(store.get('hidden', []));
+      addTracks(TG.saved().filter((d) => !hidden.has(d.key)).map(tgTrack), true);
+    }
+    let was = TG.state.phase;
+    TG.on((s) => {
+      if (s.phase === 'ready' && was !== 'ready') tgSync(true);
+      was = s.phase;
+      if (view.tab === 'telegram') renderLib();
+    });
+    TG.resume();
+  }
+
+  $('tracklist').addEventListener('submit', (e) => {
+    if (!e.target.closest('.tg-form')) return;
+    e.preventDefault();
+    const v = e.target.elements.v;
+    if (v && v.value.trim()) TG.submit(v.value);
+    else if (v) v.focus();
+  });
+  $('tracklist').addEventListener('click', (e) => {
+    const b = e.target.closest('.tg-card [data-act]');
+    if (b) { tgAction(b.dataset.act); return; }
+    const row = e.target.closest('.tg-chat');
+    if (!row || !tgPick) return;
+    e.preventDefault();
+    const id = row.dataset.tgChat;
+    if (tgPick.on.has(id)) tgPick.on.delete(id); else tgPick.on.add(id);
+    row.querySelector('input').checked = tgPick.on.has(id);
+    const sub = document.querySelector('#lib-head .lh-sub');
+    if (sub) sub.textContent = tgPick.on.size + ' выбрано';
+  });
+
   // ---------- Старт ----------
   async function boot() {
     setTheme();
@@ -1365,6 +1581,7 @@
     $('auto-scan-row').classList.toggle('hidden', !canScan);
     $('auto-scan').checked = settings.autoScan;
     if (canScan && settings.autoScan) scanDevice(false);
+    tgBoot();
     $('btn-check-update').onclick = () => window.squadCheckUpdates && window.squadCheckUpdates(true);
     renderLib();
     showMeta();
