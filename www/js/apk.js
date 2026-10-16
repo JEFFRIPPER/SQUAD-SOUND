@@ -1132,6 +1132,95 @@
     wShow(W.i + (e.clientX < innerWidth * 0.3 ? -1 : 1));
   });
 
+  // ---------- Свои пресеты звука и резервная копия настроек (файл) ----------
+  const presets = ls.get('presets', []); // [{name, s: состояние движка}]
+  const pcardS = document.createElement('div');
+  pcardS.className = 'card';
+  $('panel-eq').prepend(pcardS);
+  function presetsUI() {
+    pcardS.innerHTML = '<h3>Мои пресеты</h3><p class="hint">Эквалайзер и эффекты целиком. Без ограничений по количеству.</p>' +
+      (presets.length ? '<div class="chips">' + presets.map((x, i) => '<span class="chip pr-chip" data-pr="' + i + '">' + esc(x.name) +
+        '<button class="pr-x" data-prx="' + i + '" aria-label="Удалить">×</button></span>').join('') + '</div>' : '') +
+      '<div class="chips"><button class="chip" id="pr-save">' + svg(IC.plus) + ' Сохранить текущий звук</button>' +
+      (presets.length ? '<button class="chip" id="pr-export">Экспорт в файл</button>' : '') + '<button class="chip" id="pr-import">Импорт из файла</button></div>';
+  }
+  presetsUI();
+  pcardS.addEventListener('click', (e) => {
+    const x = e.target.closest('[data-prx]');
+    if (x) {
+      const i = +x.dataset.prx;
+      if (confirm('Удалить пресет «' + presets[i].name + '»?')) { presets.splice(i, 1); ls.set('presets', presets); presetsUI(); }
+      return;
+    }
+    const c = e.target.closest('[data-pr]');
+    if (c) { const p = presets[+c.dataset.pr]; S.setSound(p.s); S.toast('Пресет: ' + p.name); return; }
+    const id = e.target.closest('button') && e.target.closest('button').id;
+    if (id === 'pr-save') {
+      const name = (prompt('Название пресета', 'Мой звук ' + (presets.length + 1)) || '').trim().slice(0, 40);
+      if (!name) return;
+      const st = S.sound(); delete st.volume;
+      const i = presets.findIndex((p) => p.name === name);
+      if (i >= 0) presets[i].s = st; else presets.push({ name, s: st });
+      ls.set('presets', presets); presetsUI(); S.toast('Пресет «' + name + '» сохранён');
+    } else if (id === 'pr-export') saveFile('squad-presets.json', { type: 'presets', presets });
+    else if (id === 'pr-import') importFile();
+  });
+
+  // что уходит в резервную копию: настройки, звук, плейлисты, статистика, вид; без сессий Telegram/Last.fm и кэшей
+  const BACKUP_KEYS = ['squad.settings', 'squad.fx', 'squad.playlists', 'squad.web.tracks', 'squad.apk.prefs', 'squad.apk.stats', 'squad.apk.presets', 'squad.apk.mood'];
+  async function saveFile(name, payload) {
+    const text = JSON.stringify(Object.assign({ app: 'SQUAD SOUND', v: 1, date: new Date().toISOString() }, payload), null, 1);
+    try {
+      if (S.isAndroid && cap && cap.nativePromise) {
+        const r = await native('SquadMedia', 'saveText', { name, text, mime: 'application/json' });
+        if (r && r.saved) S.toast('Файл сохранён');
+      } else {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+        a.download = name; a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      }
+    } catch (e) { S.toast('Не удалось сохранить файл'); }
+  }
+  function importFile() {
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'application/json,.json,text/plain';
+    inp.onchange = async () => {
+      const f = inp.files && inp.files[0];
+      if (!f) return;
+      let j;
+      try { j = JSON.parse(await f.text()); } catch (_) { S.toast('Это не файл SQUAD SOUND'); return; }
+      if (!j || j.app !== 'SQUAD SOUND') { S.toast('Это не файл SQUAD SOUND'); return; }
+      if (j.type === 'presets' && Array.isArray(j.presets)) {
+        let n = 0;
+        j.presets.forEach((p) => {
+          if (!p || typeof p.name !== 'string' || !p.s || typeof p.s !== 'object') return;
+          const name = p.name.slice(0, 40), i = presets.findIndex((x) => x.name === name);
+          if (i >= 0) presets[i].s = p.s; else presets.push({ name, s: p.s });
+          n++;
+        });
+        ls.set('presets', presets); presetsUI();
+        S.toast('Пресетов добавлено: ' + n);
+      } else if (j.type === 'backup' && j.data && typeof j.data === 'object') {
+        if (!confirm('Заменить настройки, плейлисты и статистику данными из файла? Приложение перезапустится.')) return;
+        BACKUP_KEYS.forEach((k) => { if (typeof j.data[k] === 'string') try { localStorage.setItem(k, j.data[k]); } catch (_) {} });
+        location.reload();
+      } else S.toast('Файл не распознан');
+    };
+    inp.click();
+  }
+  const kcard = document.createElement('div');
+  kcard.className = 'card';
+  kcard.innerHTML = '<h3>Резервная копия</h3><p class="hint">Настройки, эквалайзер и пресеты, плейлисты, статистика и вид — одним файлом. Удобно перенести на другой телефон. Входы в Telegram и Last.fm в файл не попадают.</p>' +
+    '<div class="chips"><button class="chip" id="bk-save">Сохранить в файл</button><button class="chip" id="bk-load">Восстановить из файла</button></div>';
+  lcard.after(kcard);
+  $('bk-save').addEventListener('click', () => {
+    const data = {};
+    BACKUP_KEYS.forEach((k) => { try { const v = localStorage.getItem(k); if (v != null) data[k] = v; } catch (_) {} });
+    saveFile('squad-sound-' + today() + '.json', { type: 'backup', data });
+  });
+  $('bk-load').addEventListener('click', importFile);
+
   // ---------- Кнопка «Назад» Android ----------
   function back() {
     if (closeWrap()) return;

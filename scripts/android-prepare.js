@@ -25,9 +25,11 @@ fs.writeFileSync(gradle, g);
 // Нативные плагины (поиск музыки, обновление APK), MainActivity и разрешения
 const javaDir = path.join(root, 'android', 'app', 'src', 'main', 'java', 'com', 'squad', 'sound');
 fs.mkdirSync(javaDir, { recursive: true });
-for (const f of ['MusicScannerPlugin.java', 'SquadUpdaterPlugin.java', 'SquadMediaPlugin.java', 'SquadMediaService.java', 'MainActivity.java']) {
+for (const f of ['MusicScannerPlugin.java', 'SquadUpdaterPlugin.java', 'SquadMediaPlugin.java', 'SquadMediaService.java', 'SquadWidget.java', 'MainActivity.java']) {
   fs.copyFileSync(path.join(root, 'android-src', f), path.join(javaDir, f));
 }
+// Ресурсы виджета (android-src/res → app/src/main/res)
+fs.cpSync(path.join(root, 'android-src', 'res'), path.join(root, 'android', 'app', 'src', 'main', 'res'), { recursive: true });
 const manifest = path.join(root, 'android', 'app', 'src', 'main', 'AndroidManifest.xml');
 let m = fs.readFileSync(manifest, 'utf8');
 const perms = [
@@ -49,6 +51,10 @@ for (const p of perms) {
 }
 const service = '<service android:name=".SquadMediaService" android:exported="false" android:foregroundServiceType="mediaPlayback" />';
 if (!m.includes('.SquadMediaService')) m = m.replace('</application>', '    ' + service + '\n    </application>');
+const widget = '<receiver android:name=".SquadWidget" android:exported="false" android:label="SQUAD SOUND">' +
+  '<intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>' +
+  '<meta-data android:name="android.appwidget.provider" android:resource="@xml/squad_widget_info" /></receiver>';
+if (!m.includes('.SquadWidget')) m = m.replace('</application>', '    ' + widget + '\n    </application>');
 fs.writeFileSync(manifest, m);
 
 run('npx cap sync android');

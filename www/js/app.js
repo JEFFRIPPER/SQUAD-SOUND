@@ -1748,6 +1748,14 @@
     seek: (s) => { if (A().src) A().currentTime = s; },
     rate: () => A().playbackRate || 1,
     item: (i) => items[i] || null,
+    sound: () => JSON.parse(JSON.stringify(engine.state)),
+    setSound(st) {
+      const v = Object.assign({}, st);
+      delete v.volume; // громкость пресетом не трогаем
+      engine.load(v);
+      settings.eqPreset = 'custom'; saveSettings();
+      syncEq(); syncFx(); saveFx();
+    },
     pause: () => decks.forEach((d) => d.pause()),
     // включить список ключей с позиции i; shuffle — перемешать
     play(keys, i, shuffle) {

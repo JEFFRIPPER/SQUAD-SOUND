@@ -3,10 +3,12 @@ package com.squad.sound;
 // Мост между плеером в WebView и SquadMediaService (уведомление, экран блокировки, наушники).
 // JS: Capacitor.nativePromise('SquadMedia', 'update', {...}); нажатия приходят window-событием «squadMedia».
 
+import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Base64;
@@ -14,6 +16,8 @@ import androidx.core.content.ContextCompat;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
+import androidx.activity.result.ActivityResult;
+import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.JSObject;
 import java.io.ByteArrayOutputStream;
@@ -33,6 +37,12 @@ public class SquadMediaPlugin extends Plugin {
     @Override
     public void load() {
         self = this;
+    }
+
+    // Жив ли плеер в WebView (после выгрузки процесса — нет)
+    static boolean alive() {
+        SquadMediaPlugin p = self;
+        return p != null && p.bridge != null && p.getActivity() != null && !p.getActivity().isFinishing();
     }
 
     // Нажатие в уведомлении/на наушниках → window «squadMedia» {action, pos}
@@ -122,6 +132,37 @@ public class SquadMediaPlugin extends Plugin {
                 if (c != null) c.disconnect();
             }
         }).start();
+    }
+
+    // Сохранить текст в файл, место выбирает пользователь (резервная копия настроек, пресеты)
+    @PluginMethod
+    public void saveText(PluginCall call) {
+        Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE)
+            .setType(call.getString("mime", "application/json"))
+            .putExtra(Intent.EXTRA_TITLE, call.getString("name", "squad-sound.json"));
+        startActivityForResult(call, i, "onSaveText");
+    }
+
+    @ActivityCallback
+    private void onSaveText(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        JSObject r = new JSObject();
+        Intent data = result.getData();
+        Uri uri = data != null ? data.getData() : null;
+        if (result.getResultCode() != Activity.RESULT_OK || uri == null) {
+            r.put("saved", false);
+            call.resolve(r);
+            return;
+        }
+        try (OutputStream o = getContext().getContentResolver().openOutputStream(uri, "w")) {
+            if (o == null) throw new IllegalStateException("stream");
+            o.write(call.getString("text", "").getBytes(StandardCharsets.UTF_8));
+            r.put("saved", true);
+            call.resolve(r);
+        } catch (Throwable e) {
+            call.reject(String.valueOf(e.getMessage()));
+        }
     }
 
     private static Bitmap decode(String dataUrl) {

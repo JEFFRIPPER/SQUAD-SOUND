@@ -26,9 +26,9 @@ import android.os.SystemClock;
 public class SquadMediaService extends Service {
 
     static final String ACTION_START = "com.squad.sound.media.START";
-    private static final String ACTION_TOGGLE = "com.squad.sound.media.TOGGLE";
-    private static final String ACTION_NEXT = "com.squad.sound.media.NEXT";
-    private static final String ACTION_PREV = "com.squad.sound.media.PREV";
+    static final String ACTION_TOGGLE = "com.squad.sound.media.TOGGLE";
+    static final String ACTION_NEXT = "com.squad.sound.media.NEXT";
+    static final String ACTION_PREV = "com.squad.sound.media.PREV";
     private static final String ACTION_CLOSE = "com.squad.sound.media.CLOSE";
     private static final String CHANNEL = "playback";
     private static final int ID = 7001;
@@ -77,6 +77,15 @@ public class SquadMediaService extends Service {
         String a = intent != null ? intent.getAction() : null;
         // startForeground — сразу, иначе система закроет приложение
         refresh();
+        if (a != null && !ACTION_START.equals(a) && !SquadMediaPlugin.alive()) {
+            // нажали в виджете, а плеера уже нет: открываем приложение
+            try {
+                Intent open = getPackageManager().getLaunchIntentForPackage(getPackageName());
+                if (open != null) startActivity(open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            } catch (Throwable ignored) {}
+            shutdown();
+            return START_NOT_STICKY;
+        }
         if (ACTION_TOGGLE.equals(a)) SquadMediaPlugin.emit(playing ? "pause" : "play", -1);
         else if (ACTION_NEXT.equals(a)) SquadMediaPlugin.emit("next", -1);
         else if (ACTION_PREV.equals(a)) SquadMediaPlugin.emit("prev", -1);
@@ -113,6 +122,7 @@ public class SquadMediaService extends Service {
             if (Build.VERSION.SDK_INT >= 29) startForeground(ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
             else startForeground(ID, n);
             if (playing) wake.acquire(6 * 60 * 60 * 1000L); else if (wake.isHeld()) wake.release();
+            SquadWidget.push(this);
         } catch (Throwable e) {
             android.util.Log.e("SquadMedia", "refresh", e);
         }
@@ -158,6 +168,7 @@ public class SquadMediaService extends Service {
     @Override
     public void onDestroy() {
         instance = null;
+        SquadWidget.push(this);
         try { if (wake != null && wake.isHeld()) wake.release(); } catch (Throwable ignored) {}
         try { session.setActive(false); session.release(); } catch (Throwable ignored) {}
         super.onDestroy();

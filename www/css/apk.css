@@ -262,3 +262,9 @@ html.apk .sheet-list button { display: flex; align-items: center; gap: 14px; pad
 html.apk .sheet-list button:active { background: var(--md-container-highest); }
 html.apk .sheet-list svg { width: 22px; height: 22px; fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; flex-shrink: 0; }
 html.apk .lfm-in { width: 100%; box-sizing: border-box; margin: 6px 0; font-family: ui-monospace, monospace; font-size: 13px; }
+
+/* Мои пресеты */
+html.apk .pr-chip { display: inline-flex; align-items: center; gap: 4px; padding-right: 4px; }
+html.apk .pr-x { width: 26px; height: 26px; border: 0; border-radius: 50%; background: transparent; color: var(--muted); font-size: 18px; line-height: 1; }
+html.apk .pr-x:active { background: var(--md-container-highest); }
+html.apk #pr-save svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; vertical-align: -3px; }
