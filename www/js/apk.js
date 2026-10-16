@@ -413,6 +413,48 @@
     if (dy > 120) closePlayer();
   });
 
+  // ---------- Свайпы по трекам: вправо — в очередь, влево — в любимые ----------
+  const tl = $('tracklist');
+  let ts = null, swallow = false;
+  tl.addEventListener('touchstart', (e) => {
+    const li = e.target.closest('li.track');
+    ts = null;
+    if (!li || e.touches.length !== 1 || e.target.closest('.t-handle, .t-more')) return;
+    const it = S.item(+li.dataset.idx);
+    if (!it || !it.t || !S.byKey(it.t.key)) return;
+    ts = { li, key: it.t.key, x: e.touches[0].clientX, y: e.touches[0].clientY, dx: 0, on: false, q: S.view.tab === 'queue' };
+  }, { passive: true });
+  tl.addEventListener('touchmove', (e) => {
+    if (!ts) return;
+    const dx = e.touches[0].clientX - ts.x, dy = e.touches[0].clientY - ts.y;
+    if (!ts.on) {
+      if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) { ts = null; return; } // это прокрутка
+      if (Math.abs(dx) < 14) return;
+      ts.on = true;
+      ts.li.classList.add('swiping');
+    }
+    ts.dx = Math.max(-140, Math.min(ts.q ? 0 : 140, dx));
+    ts.li.style.setProperty('--sx', ts.dx + 'px');
+    ts.li.classList.toggle('sw-r', ts.dx > 0);
+    ts.li.classList.toggle('sw-l', ts.dx < 0);
+    ts.li.classList.toggle('sw-go', Math.abs(ts.dx) >= 80);
+  }, { passive: true });
+  const swEnd = () => {
+    if (!ts) return;
+    const { li, dx, on, key } = ts;
+    ts = null;
+    if (!on) return;
+    swallow = true; setTimeout(() => { swallow = false; }, 350); // не считать свайп нажатием
+    li.classList.remove('swiping', 'sw-go');
+    li.style.setProperty('--sx', '0px');
+    setTimeout(() => li.classList.remove('sw-r', 'sw-l'), 220);
+    if (dx >= 80) S.enqueue(key);
+    else if (dx <= -80) toggleLike(key);
+  };
+  tl.addEventListener('touchend', swEnd);
+  tl.addEventListener('touchcancel', swEnd);
+  tl.addEventListener('click', (e) => { if (swallow) { e.stopImmediatePropagation(); e.preventDefault(); } }, true);
+
   // ---------- Нижние листы ----------
   const sheetWrap = document.createElement('div');
   sheetWrap.className = 'sheet-wrap';

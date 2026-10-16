@@ -183,3 +183,16 @@ html.apk .sheet-wrap.closing { animation: md-fade-out 220ms var(--md-ease-accel)
 @media (prefers-reduced-motion: reduce) {
   .wave i, html.apk .now:not(.hidden-mobile), html.apk.np-spin body.is-playing .now .cover { animation: none !important; }
 }
+
+/* Свайпы по трекам */
+html.apk #tracklist .track { position: relative; touch-action: pan-y; }
+html.apk #tracklist .track > :not(.md-ripple) { position: relative; z-index: 1; transition: transform .2s ease; }
+html.apk #tracklist .track.sw-r > :not(.md-ripple), html.apk #tracklist .track.sw-l > :not(.md-ripple) { transform: translateX(var(--sx, 0)); }
+html.apk #tracklist .track.swiping > :not(.md-ripple) { transition: none; }
+html.apk #tracklist .track.sw-r::before, html.apk #tracklist .track.sw-l::before {
+  position: absolute; inset: 0; z-index: 0; border-radius: inherit; display: flex; align-items: center; padding: 0 20px;
+  font-weight: 600; font-size: 14px; color: var(--accent); background: var(--md-container-highest); transition: background .15s, color .15s;
+}
+html.apk #tracklist .track.sw-r::before { content: '＋  В очередь'; justify-content: flex-start; }
+html.apk #tracklist .track.sw-l::before { content: '♥  В любимые'; justify-content: flex-end; }
+html.apk #tracklist .track.sw-go::before { background: var(--accent); color: var(--on-accent); }

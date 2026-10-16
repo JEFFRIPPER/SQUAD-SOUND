@@ -858,6 +858,7 @@
     renderLib();
     settings.lastPath = t.path || t.uri || null;
     saveSettings();
+    saveQueue();
     await engine.init().catch((e) => console.error(e));
     if (token !== playToken) return;
     if (engine.ctx && engine.ctx.state === 'suspended') engine.ctx.resume().catch(() => {});
@@ -868,6 +869,10 @@
         next.pause();
         await loadDeck(next, t);
         if (token !== playToken) return;
+      }
+      if (resumeAt) {
+        if (resumeAt.key === t.key) try { next.currentTime = resumeAt.time; } catch (_) {}
+        resumeAt = null;
       }
       pre = null;
       engine.apply('speed'); // playbackRate сбрасывается при смене src
@@ -1008,6 +1013,7 @@
     $('t-cur').textContent = fmt(a.currentTime);
     $('t-dur').textContent = fmt(d);
     $('mini-progress').style.width = (d ? (a.currentTime / d) * 100 : 0) + '%';
+    if (apkUI && !a.paused && Date.now() - (onTime.saved || 0) > 15000) { onTime.saved = Date.now(); saveQueueTime(); }
     if ('mediaSession' in navigator && d && navigator.mediaSession.setPositionState) {
       try { navigator.mediaSession.setPositionState({ duration: d, position: Math.min(a.currentTime, d), playbackRate: a.playbackRate }); } catch (_) {}
     }
@@ -1362,8 +1368,32 @@
   // ---------- Автопоиск музыки на устройстве ----------
   function restoreLast() {
     if (A().src || playToken > 0 || userQueued) return; // пользователь уже что-то включил или собрал очередь
+    if (apkUI && restoreQueue()) return;
     const last = tracks.findIndex((t) => t.key === settings.lastPath);
     if (last >= 0) { buildQueue(tracks.map((t) => t.key), last); showMeta(); renderLib(); }
+  }
+
+  // APK: очередь и место в треке переживают перезапуск
+  let resumeAt = null; // {key, time} — куда перемотать при первом запуске восстановленного трека
+  function saveQueue() {
+    if (!apkUI || qpos < 0) return;
+    const from = Math.max(0, qpos - 200);
+    store.set('queue', { keys: queue.slice(from, qpos + 1500), pos: qpos - from });
+  }
+  function saveQueueTime() {
+    if (!apkUI || qpos < 0 || !A().src) return;
+    store.set('queueTime', { key: queue[qpos], time: A().currentTime || 0 });
+  }
+  function restoreQueue() {
+    const q = store.get('queue', null);
+    if (!q || !Array.isArray(q.keys) || !byKey.has(q.keys[q.pos])) return false;
+    const cur = q.keys[q.pos];
+    queue = q.keys.filter((k) => byKey.has(k));
+    qpos = q.keys.slice(0, q.pos).filter((k) => byKey.has(k)).length;
+    const tm = store.get('queueTime', null);
+    resumeAt = tm && tm.key === cur && tm.time > 5 ? tm : null;
+    showMeta(); renderLib();
+    return true;
   }
 
   let scanBusy = false;
@@ -1698,6 +1728,8 @@
     $('btn-check-update').onclick = () => window.squadCheckUpdates && window.squadCheckUpdates(true);
     renderLib();
     showMeta();
+    document.addEventListener('visibilitychange', () => { if (document.hidden) { saveQueue(); saveQueueTime(); } });
+    window.addEventListener('pagehide', () => { saveQueue(); saveQueueTime(); });
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden && engine.ctx && engine.ctx.state === 'suspended' && !A().paused) engine.ctx.resume();
     });
@@ -1715,6 +1747,7 @@
     time: () => ({ cur: A().currentTime || 0, dur: A().duration || 0 }),
     seek: (s) => { if (A().src) A().currentTime = s; },
     rate: () => A().playbackRate || 1,
+    item: (i) => items[i] || null,
     pause: () => decks.forEach((d) => d.pause()),
     // включить список ключей с позиции i; shuffle — перемешать
     play(keys, i, shuffle) {
