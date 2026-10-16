@@ -11,6 +11,11 @@
   const AUDIO_RE = /\.(mp3|flac|wav|ogg|oga|m4a|aac|opus|webm|mp4)$/i; // WMA Chromium не играет
   const cap = window.Capacitor;
   const isAndroid = !!(cap && cap.getPlatform && cap.getPlatform() === 'android');
+  // Интерфейс APK (js/apk.js, css/apk.css): нижняя навигация, главная, полноэкранный плеер. В .exe не включается.
+  const apkUI = isAndroid || /[?&]apk=1\b/.test(location.search);
+  if (apkUI) document.documentElement.classList.add('apk');
+  const appEvents = new EventTarget();
+  const emitApp = (type) => appEvents.dispatchEvent(new Event(type));
   // Нативный поиск музыки: в .exe — по дискам, на Android — через MediaStore (android-src/MusicScannerPlugin.java)
   const scanner = isAndroid && cap.nativePromise ? (m, o) => cap.nativePromise('MusicScanner', m, o || {}) : null;
   const canScan = !!((native && native.scanMusic) || scanner);
@@ -387,6 +392,7 @@
     if (drag) { renderLib.pending = true; return; } // перерисовка посреди перетаскивания задвоит строки
     renderLib.pending = false;
     lastRender = Date.now();
+    emitApp('library');
     renderLib.gen = (renderLib.gen || 0) + 1;
     const q = $('search').value.trim().toLowerCase();
     const tab = view.tab;
@@ -936,6 +942,7 @@
     document.body.classList.toggle('is-playing', playing);
     $('tracklist').classList.toggle('paused', !playing);
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = playing ? 'playing' : 'paused';
+    emitApp('play');
   }
 
   function applyAccent() {
@@ -973,6 +980,7 @@
     }
     applyAccent();
     updateMini();
+    emitApp('track');
   }
 
   if ('mediaSession' in navigator) {
@@ -1111,16 +1119,18 @@
   });
 
   // ---------- Вкладки ----------
-  const isMobile = () => window.matchMedia('(max-width: 820px)').matches;
+  const isMobile = () => apkUI || window.matchMedia('(max-width: 820px)').matches;
   function showTab(tab) {
     if (tab === 'player' && !isMobile()) tab = 'library';
+    if (!$('panel-' + tab) && tab !== 'player') tab = 'library';
     settings.tab = tab;
     document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
-    ['library', 'eq', 'fx', 'themes'].forEach((p) => {
-      $('panel-' + p).classList.toggle('hidden', tab !== p);
+    ['home', 'library', 'eq', 'fx', 'themes'].forEach((p) => {
+      if ($('panel-' + p)) $('panel-' + p).classList.toggle('hidden', tab !== p);
     });
     $('panel-player').classList.toggle('hidden-mobile', tab !== 'player');
     updateMini();
+    emitApp('tab');
   }
   function updateMini() {
     $('mini').classList.toggle('hide', settings.tab === 'player' || !curTrack());
@@ -1692,5 +1702,33 @@
       if (!document.hidden && engine.ctx && engine.ctx.state === 'suspended' && !A().paused) engine.ctx.resume();
     });
   }
+  // ---------- Мост для интерфейса APK (js/apk.js) ----------
+  window.SquadApp = {
+    get tracks() { return tracks; },
+    get playlists() { return playlists; },
+    get queueInfo() { return { pos: qpos, len: queue.length }; },
+    get view() { return view; },
+    settings, saveSettings, isAndroid, canScan,
+    cur: curTrack,
+    byKey: (k) => byKey.get(k),
+    playing: () => !A().paused,
+    time: () => ({ cur: A().currentTime || 0, dur: A().duration || 0 }),
+    seek: (s) => { if (A().src) A().currentTime = s; },
+    // включить список ключей с позиции i; shuffle — перемешать
+    play(keys, i, shuffle) {
+      if (!keys.length) return;
+      userQueued = true;
+      const was = settings.shuffle;
+      if (shuffle != null) settings.shuffle = !!shuffle;
+      buildQueue(keys, Math.max(0, i || 0));
+      if (shuffle != null) settings.shuffle = was;
+      playAt(qpos);
+    },
+    append(keys) { queue.push(...keys); if (view.tab === 'queue') renderLib(); },
+    togglePlay, step, showTab, openLib, toast, fmt, esc, renderLib, savePlaylists, enqueue, playNext,
+    webSearch: (q) => webSearch(q),
+    on: (type, cb) => appEvents.addEventListener(type, cb),
+  };
+
   boot();
 })();

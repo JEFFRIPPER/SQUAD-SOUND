@@ -115,5 +115,5 @@
     await cache.del(key);
   }
 
-  window.SquadOnline = { search, add, blob, remove, saved, has: (key) => saved().some((x) => x.key === key), cached: async (key) => !!(await cache.get(key)) };
+  window.SquadOnline = { json: (url) => get(url, false), search, add, blob, remove, saved, has: (key) => saved().some((x) => x.key === key), cached: async (key) => !!(await cache.get(key)) };
 })();
