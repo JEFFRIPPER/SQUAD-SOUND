@@ -37,6 +37,8 @@
     globe: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18',
     folder: 'M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z',
     mic: 'M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3',
+    sparkle: 'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z',
+    close: 'M6 6l12 12M18 6 6 18',
   };
 
   // ---------- Настройки интерфейса ----------
@@ -49,18 +51,39 @@
   applyPrefs();
 
   // ---------- Статистика прослушиваний (локально, без ограничений) ----------
-  // {t: {key: {n, sec, last, title, artist}}, days: {'2026-10-16': sec}, total}
+  // {t: {key: {n, sec, last, title, artist}}, days: {'2026-10-16': sec}, total,
+  //  m: {'2026-10': {t: {key: [n, sec]}, h: [24 × sec], total}}} — помесячно для «Итогов месяца»
   const stats = Object.assign({ t: {}, days: {}, total: 0 }, ls.get('stats', {}));
   let statsDirty = false;
-  const today = () => new Date().toISOString().slice(0, 10);
+  const p2 = (n) => String(n).padStart(2, '0');
+  const ymd = (d) => d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()); // местная дата, не UTC
+  const today = () => ymd(new Date());
+  const monthOf = (k) => stats.m[k] || (stats.m[k] = { t: {}, h: new Array(24).fill(0), total: 0 });
+  if (!stats.m) {
+    // первый запуск с «Итогами»: текущий месяц собираем из того, что уже накоплено
+    stats.m = {};
+    const mk = today().slice(0, 7);
+    const from = new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime();
+    const M = monthOf(mk);
+    Object.keys(stats.t).forEach((k) => { const e = stats.t[k]; if (e.last >= from) M.t[k] = [e.n, e.sec]; });
+    Object.keys(stats.days).forEach((d) => { if (d.startsWith(mk)) M.total += stats.days[d]; });
+    // время по трекам накоплено за всё время — ужимаем до времени месяца
+    const all = Object.values(M.t).reduce((a, x) => a + x[1], 0);
+    if (all > M.total && all) Object.values(M.t).forEach((x) => { x[1] = Math.round(x[1] * M.total / all); });
+    M.seeded = true;
+  }
   let counted = null;
   setInterval(() => {
     const t = S.cur();
     if (!t || !S.playing()) return;
     const e = stats.t[t.key] || (stats.t[t.key] = { n: 0, sec: 0, last: 0 });
-    e.sec += 5; e.last = Date.now(); e.title = t.title; e.artist = t.artist;
-    if (counted !== t.key && e.sec >= 30) { e.n++; counted = t.key; } // прослушивание засчитываем после 30 с
     const d = today();
+    const M = monthOf(d.slice(0, 7));
+    const me = M.t[t.key] || (M.t[t.key] = [0, 0]);
+    e.sec += 5; e.last = Date.now(); e.title = t.title; e.artist = t.artist;
+    me[1] += 5; M.h[new Date().getHours()] += 5; M.total += 5;
+    if (t.genre) e.genre = t.genre;
+    if (counted !== t.key && e.sec >= 30) { e.n++; me[0]++; counted = t.key; } // прослушивание засчитываем после 30 с
     stats.days[d] = (stats.days[d] || 0) + 5;
     stats.total += 5;
     statsDirty = true;
@@ -70,7 +93,9 @@
   function saveStats() {
     // старые дни и забытые треки не копим бесконечно
     const days = Object.keys(stats.days).sort();
-    while (days.length > 120) delete stats.days[days.shift()];
+    while (days.length > 400) delete stats.days[days.shift()];
+    const months = Object.keys(stats.m).sort();
+    while (months.length > 13) delete stats.m[months.shift()];
     const keys = Object.keys(stats.t);
     if (keys.length > 4000) keys.sort((a, b) => stats.t[a].last - stats.t[b].last).slice(0, keys.length - 4000).forEach((k) => delete stats.t[k]);
     ls.set('stats', stats);
@@ -255,7 +280,7 @@
     const artists = {};
     Object.keys(stats.t).forEach((k) => { const e = stats.t[k]; if (e.artist && byKey(k)) artists[e.artist] = (artists[e.artist] || 0) + e.sec; });
     const topArtist = Object.keys(artists).sort((a, b) => artists[b] - artists[a])[0];
-    const week = (() => { let s = 0; for (let i = 0; i < 7; i++) s += stats.days[new Date(Date.now() - i * 864e5).toISOString().slice(0, 10)] || 0; return s; })();
+    const week = (() => { let s = 0; for (let i = 0; i < 7; i++) s += stats.days[ymd(new Date(Date.now() - i * 864e5))] || 0; return s; })();
     const plays = Object.values(stats.t).reduce((s, e) => s + e.n, 0);
 
     let h = '<header class="h-head"><div><div class="h-hello">' + greet() + '</div><div class="h-sub">' +
@@ -292,7 +317,7 @@
       tile('artists', IC.mic, 'Исполнители', '') + tile('folders', IC.folder, 'Папки', '') + '</div>';
 
     if (stats.total) {
-      h += '<h2 class="h-title">Статистика</h2><div class="h-stats">' +
+      h += '<h2 class="h-title">Статистика</h2>' + wrapCards() + '<div class="h-stats">' +
         stat(dur(stats.days[today()] || 0), 'сегодня') + stat(dur(week), 'за неделю') + stat(dur(stats.total), 'всего') + stat(String(plays), 'прослушиваний') +
         '</div>' + (topArtist ? '<div class="h-top-artist">Чаще всего: <b>' + esc(topArtist) + '</b></div>' : '');
       if (top.length) {
@@ -322,6 +347,7 @@
     if (el.dataset.pl) { go('library'); S.openLib('playlists', el.dataset.pl); return; }
     if (el.dataset.lib) { go(el.dataset.lib === 'online' ? 'search' : 'library'); S.openLib(el.dataset.lib); return; }
     const h = el.dataset.h;
+    if (h === 'wrap') { openWrap(el.dataset.m); return; }
     if (h === 'wave') { if (wave && S.playing()) S.togglePlay(); else startWave(); }
     else if (h === 'liked') { likedList(); S.savePlaylists(); go('library'); S.openLib('playlists', LIKED); }
     else if (h === 'playlists') { go('library'); S.openLib('playlists'); }
@@ -689,8 +715,137 @@
     });
   }
 
+  // ---------- Итоги месяца (истории в духе Wrapped, из локальной статистики) ----------
+  const MONTHS = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
+  const monthName = (k) => MONTHS[+k.slice(5, 7) - 1] + ' ' + k.slice(0, 4);
+  const cap1 = (x) => x[0].toUpperCase() + x.slice(1);
+  function wrapCards() {
+    const keys = Object.keys(stats.m).filter((k) => stats.m[k].total >= 60).sort().reverse().slice(0, 2);
+    return keys.map((k, i) => '<button class="h-wrap" data-h="wrap" data-m="' + k + '"><span class="h-wrap-ic">' + svg(IC.sparkle) + '</span>' +
+      '<span><b>Итоги: ' + monthName(k) + '</b><small>' + (i === 0 && k === today().slice(0, 7) ? 'Месяц ещё идёт · ' : '') + dur(stats.m[k].total) + ' музыки</small></span></button>').join('');
+  }
+  // серии дней подряд: текущая (до сегодня/вчера) и лучшая за месяц
+  function streaks(mk) {
+    const days = new Set(Object.keys(stats.days).filter((d) => stats.days[d] >= 60));
+    let cur = 0;
+    for (let i = days.has(today()) ? 0 : 1; days.has(ymd(new Date(Date.now() - i * 864e5))); i++) cur++;
+    let best = 0, run = 0;
+    const y = +mk.slice(0, 4), m = +mk.slice(5, 7) - 1, n = new Date(y, m + 1, 0).getDate();
+    let active = 0;
+    for (let d = 1; d <= n; d++) {
+      if (days.has(ymd(new Date(y, m, d)))) { run++; active++; best = Math.max(best, run); } else run = 0;
+    }
+    return { cur, best, active };
+  }
+  function wrapData(mk) {
+    const M = stats.m[mk];
+    const tr = Object.keys(M.t).map((k) => {
+      const e = stats.t[k] || {}, t = S.byKey(k);
+      return { key: k, n: M.t[k][0], sec: M.t[k][1], title: (t && t.title) || e.title || '—', artist: (t && t.artist) || e.artist || '', thumb: t && t.thumb, genre: (t && t.genre) || e.genre, t };
+    }).filter((x) => x.sec > 0).sort((a, b) => b.n - a.n || b.sec - a.sec);
+    const sum = (field) => { const o = {}; tr.forEach((x) => { const v = x[field]; if (v) o[v] = (o[v] || 0) + x.sec; }); return Object.keys(o).sort((a, b) => o[b] - o[a]).map((k) => ({ name: k, sec: o[k] })); };
+    const hsum = M.h.reduce((a, b) => a + b, 0);
+    let peak = -1;
+    if (hsum >= 300) peak = M.h.indexOf(Math.max(...M.h));
+    return { mk, M, tr, artists: sum('artist'), genres: sum('genre'), peak, st: streaks(mk), plays: tr.reduce((a, x) => a + x.n, 0) };
+  }
+  const persona = (h) => h < 5 ? ['Ночной охотник', 'Самая музыка у тебя после полуночи'] : h < 11 ? ['Ранняя пташка', 'Утро начинается с трека'] :
+    h < 17 ? ['Дневной слушатель', 'Музыка фоном весь день'] : ['Вечерний вайб', 'Главное звучит после работы и учёбы'];
+  const wArt = (x) => x.thumb ? '<img class="w-cover" alt="" src="' + esc(x.thumb) + '">' :
+    '<div class="w-cover" style="background:linear-gradient(135deg,hsl(' + hue(x.artist + x.title) + ',70%,45%),hsl(' + ((hue(x.artist + x.title) + 50) % 360) + ',80%,30%))">' + esc((x.title[0] || 'S').toUpperCase()) + '</div>';
+  function wrapSlides(D) {
+    const name = MONTHS[+D.mk.slice(5, 7) - 1];
+    const min = Math.round(D.M.total / 60);
+    const sl = [];
+    sl.push('<div class="w-kick">SQUAD SOUND · итоги</div><div class="w-huge">' + cap1(name) + '</div><div class="w-sub">' + D.mk.slice(0, 4) +
+      '</div><p class="w-p">Посмотрим, как звучал твой месяц.</p>');
+    sl.push('<div class="w-kick">Ты слушал музыку</div><div class="w-huge">' + min.toLocaleString('ru') + '</div><div class="w-sub">' + plural(min, 'минуту', 'минуты', 'минут') + '</div>' +
+      '<p class="w-p">' + D.plays + ' ' + plural(D.plays, 'прослушивание', 'прослушивания', 'прослушиваний') + ' · ' + D.tr.length + ' ' + plural(D.tr.length, 'трек', 'трека', 'треков') +
+      (D.st.active ? ' · ' + D.st.active + ' ' + plural(D.st.active, 'день', 'дня', 'дней') + ' с музыкой' : '') + '</p>');
+    if (D.tr[0]) {
+      const x = D.tr[0];
+      sl.push('<div class="w-kick">Трек месяца</div>' + wArt(x) + '<div class="w-big">' + esc(x.title) + '</div><div class="w-sub">' + esc(x.artist) + '</div>' +
+        '<p class="w-p">' + x.n + ' ' + plural(x.n, 'раз', 'раза', 'раз') + ' · ' + dur(x.sec) + '</p>');
+    }
+    if (D.artists.length) {
+      sl.push('<div class="w-kick">Твои исполнители</div><ol class="w-list">' + D.artists.slice(0, 5).map((a, i) =>
+        '<li><b>' + (i + 1) + '</b><span>' + esc(a.name) + '</span><small>' + dur(a.sec) + '</small></li>').join('') + '</ol>');
+    }
+    if (D.tr.length > 1) {
+      sl.push('<div class="w-kick">Топ треков</div><ol class="w-list">' + D.tr.slice(0, 5).map((x, i) =>
+        '<li><b>' + (i + 1) + '</b><span>' + esc(x.title) + '<em>' + esc(x.artist) + '</em></span><small>' + x.n + '×</small></li>').join('') + '</ol>');
+    }
+    if (D.genres.length) sl.push('<div class="w-kick">Жанр месяца</div><div class="w-big">' + esc(D.genres[0].name) + '</div><p class="w-p">' + dur(D.genres[0].sec) + '</p>');
+    if (D.peak >= 0) {
+      const [t, d] = persona(D.peak);
+      const mx = Math.max(...D.M.h) || 1;
+      sl.push('<div class="w-kick">Твоё время</div><div class="w-big">' + t + '</div><div class="w-hours">' +
+        D.M.h.map((v, i) => '<i style="height:' + Math.max(3, Math.round(v / mx * 100)) + '%"' + (i === D.peak ? ' class="on"' : '') + '></i>').join('') +
+        '</div><div class="w-hl"><span>0</span><span>6</span><span>12</span><span>18</span><span>24</span></div><p class="w-p">' + d + '. Пик — ' + p2(D.peak) + ':00–' + p2((D.peak + 1) % 24) + ':00.</p>');
+    }
+    if (D.st.best > 1 || D.st.cur > 1) {
+      sl.push('<div class="w-kick">Серия</div><div class="w-huge">' + D.st.best + '</div><div class="w-sub">' + plural(D.st.best, 'день', 'дня', 'дней') + ' подряд с музыкой</div>' +
+        '<p class="w-p">' + (D.st.cur > 1 ? 'Сейчас серия ' + D.st.cur + ' ' + plural(D.st.cur, 'день', 'дня', 'дней') + '. Не прерывай!' : 'Лучшая серия за месяц.') + '</p>');
+    }
+    sl.push('<div class="w-kick">' + cap1(name) + ' в цифрах</div><div class="w-sum">' +
+      '<div><b>' + min.toLocaleString('ru') + '</b><span>минут</span></div><div><b>' + D.tr.length + '</b><span>треков</span></div>' +
+      '<div><b>' + D.st.best + '</b><span>дней подряд</span></div><div><b>' + D.plays + '</b><span>прослушиваний</span></div></div>' +
+      (D.tr[0] ? '<p class="w-p">Трек месяца: <b>' + esc(D.tr[0].title) + '</b>' + (D.artists[0] ? '<br>Исполнитель: <b>' + esc(D.artists[0].name) + '</b>' : '') + '</p>' : '') +
+      '<div class="w-acts">' + (D.tr.some((x) => x.t) ? '<button class="btn" data-w="play">' + svg(IC.play) + ' Включить топ месяца</button><button class="btn ghost" data-w="save">Сохранить плейлистом</button>' : '') + '</div>');
+    return sl;
+  }
+  const wrap = document.createElement('div');
+  wrap.className = 'wrap-ov';
+  wrap.innerHTML = '<div class="w-bars"></div><button class="w-x" aria-label="Закрыть">' + svg(IC.close) + '</button><div class="w-slide"></div>';
+  document.body.appendChild(wrap);
+  const W = { i: 0, sl: [], D: null, timer: 0 };
+  function wShow(i) {
+    if (i < 0) i = 0;
+    if (i >= W.sl.length) { closeWrap(); return; }
+    W.i = i;
+    const slide = wrap.querySelector('.w-slide');
+    slide.innerHTML = '<div class="w-in">' + W.sl[i] + '</div>';
+    wrap.style.setProperty('--wh', (hue(W.D.mk) + i * 37) % 360);
+    wrap.querySelectorAll('.w-bars i').forEach((b, k) => { b.className = k < i ? 'done' : k === i ? 'run' : ''; });
+    clearTimeout(W.timer);
+    if (i < W.sl.length - 1) W.timer = setTimeout(() => wShow(W.i + 1), 7000);
+  }
+  function openWrap(mk) {
+    if (!stats.m[mk]) return;
+    W.D = wrapData(mk);
+    W.sl = wrapSlides(W.D);
+    wrap.querySelector('.w-bars').innerHTML = W.sl.map(() => '<i></i>').join('');
+    wrap.classList.add('show');
+    root.classList.add('wrap-open');
+    wShow(0);
+  }
+  function closeWrap() {
+    if (!wrap.classList.contains('show')) return false;
+    clearTimeout(W.timer);
+    wrap.classList.remove('show');
+    root.classList.remove('wrap-open');
+    return true;
+  }
+  wrap.addEventListener('click', (e) => {
+    if (e.target.closest('.w-x')) { closeWrap(); return; }
+    const b = e.target.closest('[data-w]');
+    if (b) {
+      const keys = W.D.tr.filter((x) => x.t).slice(0, 25).map((x) => x.key);
+      if (b.dataset.w === 'play') { closeWrap(); wave = false; S.play(keys, 0, false); }
+      else {
+        const name = 'Итоги: ' + monthName(W.D.mk);
+        let pl = S.playlists.find((p) => p.name === name);
+        if (!pl) { pl = { id: 'w' + Date.now().toString(36), name, keys: [] }; S.playlists.push(pl); }
+        pl.keys = keys; S.savePlaylists(); S.toast('Плейлист «' + name + '» сохранён');
+      }
+      return;
+    }
+    wShow(W.i + (e.clientX < innerWidth * 0.3 ? -1 : 1));
+  });
+
   // ---------- Кнопка «Назад» Android ----------
   function back() {
+    if (closeWrap()) return;
     if (closeSheet()) return;
     if ($('dialog').classList.contains('show')) { $('dialog-cancel').click(); return; }
     if ($('menu').classList.contains('show')) { $('menu').classList.remove('show'); return; }
