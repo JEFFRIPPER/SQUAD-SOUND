@@ -11,7 +11,7 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
 ]);
 
-const AUDIO_RE = /\.(mp3|flac|wav|ogg|oga|m4a|aac|opus|wma|webm|mp4)$/i;
+const AUDIO_RE = /\.(mp3|flac|wav|ogg|oga|m4a|aac|opus|webm|mp4)$/i;
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -102,7 +102,7 @@ ipcMain.handle('pick-files', async (e) => {
   const r = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender), {
     title: 'Добавить треки',
     properties: ['openFile', 'multiSelections'],
-    filters: [{ name: 'Аудио', extensions: ['mp3', 'flac', 'wav', 'ogg', 'oga', 'm4a', 'aac', 'opus', 'wma', 'webm'] }],
+    filters: [{ name: 'Аудио', extensions: ['mp3', 'flac', 'wav', 'ogg', 'oga', 'm4a', 'aac', 'opus', 'webm'] }],
   });
   return r.canceled ? [] : r.filePaths;
 });

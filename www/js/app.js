@@ -8,7 +8,7 @@
   const engine = new AudioEngine(decks[0], decks[1]);
   window.squadEngine = engine; // для отладки из DevTools
   const A = () => engine.audio; // активная дека
-  const AUDIO_RE = /\.(mp3|flac|wav|ogg|oga|m4a|aac|opus|wma|webm|mp4)$/i;
+  const AUDIO_RE = /\.(mp3|flac|wav|ogg|oga|m4a|aac|opus|webm|mp4)$/i; // WMA Chromium не играет
   const cap = window.Capacitor;
   const isAndroid = !!(cap && cap.getPlatform && cap.getPlatform() === 'android');
   // Нативный поиск музыки: в .exe — по дискам, на Android — через MediaStore (android-src/MusicScannerPlugin.java)
@@ -165,20 +165,31 @@
     store.set('hidden', Array.from(h));
   };
 
-  function removeTrack(key, gone) {
-    const t = byKey.get(key);
-    if (!t) return;
-    if (!gone && (t.path || t.uri || t.tg)) hideKeys([key]);
-    if (t.tg && window.SquadTG) SquadTG.uncache(key); // скачанный файл тоже удаляем
-    if (t.web && window.SquadOnline) SquadOnline.remove(key);
-    const wasCurrent = curTrack() === t;
-    tracks = tracks.filter((x) => x !== t);
-    byKey.delete(key);
-    context = context.filter((k) => k !== key);
+  const removeTrack = (key, gone) => removeTracks([key], gone);
+
+  // Удаление пачкой: один проход по спискам и одна перерисовка, а не по разу на каждый трек.
+  // keepCache — не трогать кэш Telegram (при выходе он очищается целиком)
+  function removeTracks(keys, gone, keepCache) {
+    const del = new Set(keys.filter((k) => byKey.has(k)));
+    if (!del.size) return;
+    const hide = [];
+    let wasCurrent = false;
+    for (const key of del) {
+      const t = byKey.get(key);
+      if (!gone && (t.path || t.uri || t.tg)) hide.push(key);
+      if (t.tg && window.SquadTG && !keepCache) SquadTG.uncache(key); // скачанный файл тоже удаляем
+      if (t.web && window.SquadOnline) SquadOnline.remove(key);
+      if (curTrack() === t) wasCurrent = true;
+      byKey.delete(key);
+    }
+    if (hide.length) hideKeys(hide);
+    tracks = tracks.filter((x) => !del.has(x.key));
+    context = context.filter((k) => !del.has(k));
     let before = 0;
-    queue.forEach((k, i) => { if (k === key && i < qpos) before++; });
-    queue = queue.filter((k) => k !== key);
+    queue.forEach((k, i) => { if (del.has(k) && i < qpos) before++; });
+    queue = queue.filter((k) => !del.has(k));
     qpos = Math.min(qpos - before, queue.length - 1);
+    if (pre && del.has(pre.key)) pre = null;
     if (wasCurrent) stopAll();
     renderLib();
     saveLibrary();
@@ -249,6 +260,7 @@
     const cached = await metaDb.get(t.key);
     if (cached && cached.v === META_VER) { applyMeta(t, cached); return; }
     const m = { v: META_VER };
+    let failed = false;
     try {
       if (t.uri && scanner) {
         const ci = await SquadTags.coverInfo(await androidArt(t, 160));
@@ -264,8 +276,9 @@
       }
     } catch (e) {
       console.warn('Теги:', t.name, e);
+      failed = true;
     }
-    metaDb.put(t.key, m);
+    if (!failed) metaDb.put(t.key, m); // ошибку чтения не запоминаем навсегда
     applyMeta(t, m);
   }
 
@@ -274,13 +287,14 @@
     if (scanning) return;
     scanning = true;
     try {
-      for (let i = 0; i < tracks.length; i++) {
-        const t = tracks[i];
-        if (t.metaDone) continue;
-        await loadMeta(t);
-        scheduleRender();
-      }
-      if (tracks.some((t) => !t.metaDone)) { scanning = false; return scanMeta(); }
+      do {
+        for (let i = 0; i < tracks.length; i++) {
+          const t = tracks[i];
+          if (t.metaDone) continue;
+          await loadMeta(t);
+          scheduleRender();
+        }
+      } while (tracks.some((t) => !t.metaDone));
     } finally {
       scanning = false;
     }
@@ -370,6 +384,8 @@
   }
 
   function renderLib() {
+    if (drag) { renderLib.pending = true; return; } // перерисовка посреди перетаскивания задвоит строки
+    renderLib.pending = false;
     lastRender = Date.now();
     renderLib.gen = (renderLib.gen || 0) + 1;
     const q = $('search').value.trim().toLowerCase();
@@ -606,7 +622,9 @@
   const endDrag = (e) => {
     if (!drag || e.pointerId !== drag.id) return;
     drag.li.classList.remove('dragging');
+    const lost = !drag.li.isConnected;
     drag = null;
+    if (lost) { renderLib(); return; }
     const order = Array.from($('tracklist').children).map((li) => items[+li.dataset.idx]).filter(Boolean).map((it) => it.pos);
     if (view.tab === 'queue') {
       const cur = qpos;
@@ -733,7 +751,9 @@
     }
   }
 
+  let userQueued = false;
   function playNext(key) {
+    userQueued = true;
     if (qpos < 0) { queue = [key]; qpos = 0; playAt(0); return; }
     queue.splice(qpos + 1, 0, key);
     toast('Будет следующим');
@@ -741,6 +761,7 @@
   }
 
   function enqueue(key) {
+    userQueued = true;
     if (qpos < 0) { queue = [key]; qpos = 0; playAt(0); return; }
     queue.push(key);
     toast('Добавлено в очередь');
@@ -785,9 +806,13 @@
     throw new Error('Файл недоступен');
   }
 
+  // Поколение загрузки на каждую деку: опоздавшая загрузка (долгое скачивание) не перезапишет то, что уже играет
+  const deckGen = [0, 0];
   async function loadDeck(deck, t) {
     const i = decks.indexOf(deck);
+    const gen = ++deckGen[i];
     const url = await srcFor(t);
+    if (gen !== deckGen[i]) { URL.revokeObjectURL(url); throw new DOMException('Загрузка устарела', 'AbortError'); }
     if (deckUrls[i]) URL.revokeObjectURL(deckUrls[i]);
     deckUrls[i] = url;
     deck.dataset.key = t.key;
@@ -800,18 +825,22 @@
     const t = byKey.get(queue[pos]);
     const idle = engine.idle;
     if (!t || !idle) return;
-    pre = { pos, key: t.key };
+    pre = { pos, key: t.key, failed: false };
+    const mine = pre;
     idle.pause();
-    loadDeck(idle, t).catch(() => { pre = null; });
+    loadDeck(idle, t).catch((e) => { if (pre === mine && !(e && e.name === 'AbortError')) mine.failed = true; });
   }
 
   function stopAll() {
     playToken++;
+    deckGen[0]++; deckGen[1]++;
     decks.forEach((d) => { d.pause(); d.removeAttribute('src'); d.dataset.key = ''; d.load(); });
+    deckUrls.forEach((u, i) => { if (u) URL.revokeObjectURL(u); deckUrls[i] = null; }); // отпускаем память под файлы
     pre = null; fading = false;
     setPlayingUI();
   }
 
+  let skipped = 0; // сколько битых треков подряд пропущено при автопереходе
   // mode: 'cut' — сразу, 'gapless' — по окончании, 'fade' — кроссфейд
   async function playAt(pos, mode) {
     if (pos < 0 || pos >= queue.length) return;
@@ -850,11 +879,18 @@
       }
       fading = false;
       await p;
+      skipped = 0;
     } catch (e) {
       if (token !== playToken || (e && e.name === 'AbortError')) return;
       console.error(e);
       fading = false;
       toast('Не удалось открыть: ' + t.name);
+      if (mode === 'gapless' || mode === 'fade') {
+        skipped = (skipped || 0) + 1;
+        const np = nextPos(true);
+        if (np >= 0 && skipped < Math.min(queue.length, 20)) { setTimeout(() => playAt(np, 'gapless'), 300); return; }
+      }
+      skipped = 0;
     }
     setPlayingUI();
   }
@@ -942,7 +978,8 @@
   if ('mediaSession' in navigator) {
     const ms = navigator.mediaSession;
     const h = (a, f) => { try { ms.setActionHandler(a, f); } catch (_) {} };
-    h('play', togglePlay); h('pause', togglePlay);
+    h('play', () => { if (!A().src || A().paused) togglePlay(); });
+    h('pause', () => decks.forEach((d) => d.pause()));
     h('previoustrack', () => step(-1)); h('nexttrack', () => step(1));
     h('seekto', (d) => { A().currentTime = d.seekTime; });
   }
@@ -972,8 +1009,9 @@
     if (np < 0) return;
     const cf = settings.crossfade;
     const rem = (d - a.currentTime) / (a.playbackRate || 1);
-    if (rem < cf + 10 && !preReady(np) && Date.now() > fadeUntil) preload(np);
-    if (cf > 0 && !fading && rem <= cf && d > cf * 2 + 1) { fading = true; playAt(np, 'fade'); }
+    const started = pre && pre.pos === np && pre.key === queue[np]; // уже грузится, готово или не открылось
+    if (rem < cf + 10 && !started && Date.now() > fadeUntil) preload(np);
+    if (cf > 0 && !fading && !(started && pre.failed) && rem <= cf && d > cf * 2 + 1) { fading = true; playAt(np, 'fade'); }
   }
   $('seek').addEventListener('input', (e) => {
     seeking = true;
@@ -1066,7 +1104,7 @@
 
   // клавиатура
   window.addEventListener('keydown', (e) => {
-    if (e.target.matches('input[type=search], input[type=text], select') || $('dialog').classList.contains('show')) return;
+    if (e.target.closest('input, textarea, select, [contenteditable]') || $('dialog').classList.contains('show')) return;
     if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
     else if (e.code === 'ArrowRight') { e.ctrlKey ? step(1) : (A().currentTime += 5); }
     else if (e.code === 'ArrowLeft') { e.ctrlKey ? step(-1) : (A().currentTime -= 5); }
@@ -1313,7 +1351,7 @@
 
   // ---------- Автопоиск музыки на устройстве ----------
   function restoreLast() {
-    if (A().src) return;
+    if (A().src || playToken > 0 || userQueued) return; // пользователь уже что-то включил или собрал очередь
     const last = tracks.findIndex((t) => t.key === settings.lastPath);
     if (last >= 0) { buildQueue(tracks.map((t) => t.key), last); showMeta(); renderLib(); }
   }
