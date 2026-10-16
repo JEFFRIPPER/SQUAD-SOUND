@@ -32,19 +32,9 @@ function createWindow() {
   });
   win.removeMenu();
   win.loadURL('app://squad/index.html');
-  win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
-}
-
-function walk(dir, out, depth = 0) {
-  if (depth > 8) return out;
-  let entries = [];
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return out; }
-  for (const e of entries) {
-    const p = path.join(dir, e.name);
-    if (e.isDirectory()) walk(p, out, depth + 1);
-    else if (AUDIO_RE.test(e.name)) out.push(p);
-  }
-  return out;
+  // Наружу открываем только https, а уйти со страницы приложения окну нельзя (squadNative не должен достаться чужой странице)
+  win.webContents.setWindowOpenHandler(({ url }) => { if (/^https:\/\//.test(url)) shell.openExternal(url); return { action: 'deny' }; });
+  win.webContents.on('will-navigate', (e, url) => { if (!url.startsWith('app://squad/')) e.preventDefault(); });
 }
 
 // ---------- Автопоиск музыки по компьютеру ----------
@@ -72,7 +62,8 @@ async function scanRoots() {
   return Array.from(roots);
 }
 
-async function scanMusic() {
+// Асинхронный обход папок: окно не подвисает даже на целом диске
+async function collectAudio(roots, minSize) {
   const found = new Set();
   const seenDirs = new Set();
   const walkAsync = async (dir, depth) => {
@@ -90,14 +81,16 @@ async function scanMusic() {
       if (e.isDirectory()) {
         if (!SKIP_DIRS.has(name.toLowerCase())) await walkAsync(p, depth + 1);
       } else if (e.isFile() && AUDIO_RE.test(name) && !/\.(webm|mp4)$/i.test(name)) {
-        try { if ((await fs.promises.stat(p)).size >= MIN_SIZE) found.add(p); } catch (_) {}
+        if (!minSize) found.add(p);
+        else try { if ((await fs.promises.stat(p)).size >= minSize) found.add(p); } catch (_) {}
         if (found.size >= MAX_FILES) return;
       }
     }
   };
-  for (const r of await scanRoots()) await walkAsync(r, 0);
+  for (const r of roots) await walkAsync(r, 0);
   return Array.from(found).sort((a, b) => a.localeCompare(b, 'ru'));
 }
+const scanMusic = async () => collectAudio(await scanRoots(), MIN_SIZE);
 
 let scanning = null;
 ipcMain.handle('scan-music', () => {
@@ -120,7 +113,7 @@ ipcMain.handle('pick-folder', async (e) => {
     properties: ['openDirectory'],
   });
   if (r.canceled || !r.filePaths[0]) return [];
-  return walk(r.filePaths[0], []).sort((a, b) => a.localeCompare(b, 'ru'));
+  return collectAudio([r.filePaths[0]], 0);
 });
 
 ipcMain.handle('read-file', async (_e, p) => {
@@ -146,7 +139,7 @@ ipcMain.handle('read-range', async (_e, p, start, length) => {
 
 // Удаление трека с диска — только аудиофайлы и только в корзину, чтобы можно было вернуть
 ipcMain.handle('delete-file', async (_e, p) => {
-  if (typeof p !== 'string' || !AUDIO_RE.test(p)) throw new Error('Not an audio file');
+  if (typeof p !== 'string' || !AUDIO_RE.test(p) || /\.(webm|mp4)$/i.test(p)) throw new Error('Not an audio file');
   if (!fs.existsSync(p)) return true;
   await shell.trashItem(p);
   return true;
@@ -155,15 +148,38 @@ ipcMain.handle('delete-file', async (_e, p) => {
 // Сеть для поиска в открытых источниках: из главного процесса нет ограничений CORS
 ipcMain.handle('http-get', async (_e, url, binary) => {
   if (typeof url !== 'string' || new URL(url).protocol !== 'https:') throw new Error('Only https');
-  const r = await net.fetch(url, { headers: { 'User-Agent': 'SQUAD-SOUND/' + app.getVersion() } });
+  const r = await net.fetch(url, { signal: AbortSignal.timeout(binary ? 180000 : 20000), headers: { 'User-Agent': 'SQUAD-SOUND/' + app.getVersion() } });
   if (!r.ok) throw new Error('HTTP ' + r.status);
   if (!binary) return r.text();
-  if (+(r.headers.get('content-length') || 0) > 300 * 1024 * 1024) throw new Error('Файл слишком большой');
-  return Buffer.from(await r.arrayBuffer());
+  const LIMIT = 300 * 1024 * 1024;
+  if (+(r.headers.get('content-length') || 0) > LIMIT) throw new Error('Файл слишком большой');
+  const buf = Buffer.from(await r.arrayBuffer());
+  if (buf.byteLength > LIMIT) throw new Error('Файл слишком большой');
+  return buf;
 });
 
-ipcMain.handle('filter-existing', async (_e, paths) =>
-  (Array.isArray(paths) ? paths : []).filter((p) => typeof p === 'string' && fs.existsSync(p)));
+// Сохранённые пути проверяем асинхронно пачками, а недоступные диски/сетевые папки — один раз на корень,
+// иначе отключённая флешка или NAS вешают окно на минуты
+ipcMain.handle('filter-existing', async (_e, paths) => {
+  const list = (Array.isArray(paths) ? paths : []).filter((p) => typeof p === 'string');
+  const rootOk = new Map();
+  const rootOf = (p) => { const m = /^(\\\\[^\\]+\\[^\\]+|[A-Za-z]:\\|\/)/.exec(p); return m ? m[1] : ''; };
+  const alive = async (p) => {
+    const root = rootOf(p);
+    if (root && !rootOk.has(root)) {
+      rootOk.set(root, Promise.race([fs.promises.access(root).then(() => true, () => false), new Promise((r) => setTimeout(() => r(false), 3000))]));
+    }
+    if (root && !(await rootOk.get(root))) return false;
+    return fs.promises.access(p).then(() => true, () => false);
+  };
+  const out = [];
+  for (let i = 0; i < list.length; i += 64) {
+    const part = list.slice(i, i + 64);
+    const ok = await Promise.all(part.map(alive));
+    part.forEach((p, j) => { if (ok[j]) out.push(p); });
+  }
+  return out;
+});
 
 ipcMain.handle('version', () => app.getVersion());
 
@@ -202,7 +218,7 @@ ipcMain.handle('update-check', () => {
   manualCheck = true;
   return autoUpdater.checkForUpdates().then(() => {}).catch(() => {});
 });
-ipcMain.handle('update-install', () => { if (autoUpdater) autoUpdater.quitAndInstall(); });
+ipcMain.handle('update-install', () => { if (autoUpdater) autoUpdater.quitAndInstall(true, true); }); // тихо и сразу запустить
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -215,7 +231,7 @@ if (!app.requestSingleInstanceLock()) {
     protocol.handle('app', (req) => {
       const rel = decodeURIComponent(new URL(req.url).pathname).replace(/^\/+/, '');
       const file = path.normalize(path.join(WWW, rel || 'index.html'));
-      if (!file.startsWith(WWW)) return new Response('Forbidden', { status: 403 });
+      if (!file.startsWith(WWW + path.sep)) return new Response('Forbidden', { status: 403 });
       return net.fetch(pathToFileURL(file).toString());
     });
     createWindow();
