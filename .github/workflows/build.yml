@@ -11,8 +11,26 @@ permissions:
   contents: write
 
 jobs:
+  version:
+    name: Версия
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        # MAJOR.MINOR из package.json, PATCH = номер запуска: каждая сборка из main — новая версия для обновлений
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            BASE=$(node -p "require('./package.json').version.split('.').slice(0,2).join('.')")
+            echo "version=${BASE}.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          fi
+
   windows:
     name: Windows (.exe)
+    needs: version
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,16 +39,21 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: node scripts/set-version.js ${{ needs.version.outputs.version }}
       - name: Сборка установщика и portable
         run: npx electron-builder --win --x64 --publish never
       - uses: actions/upload-artifact@v4
         with:
           name: SQUAD-SOUND-windows
-          path: dist/*.exe
+          path: |
+            dist/*.exe
+            dist/*.blockmap
+            dist/latest.yml
           if-no-files-found: error
 
   android:
     name: Android (.apk)
+    needs: version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -43,6 +66,16 @@ jobs:
           distribution: temurin
           java-version: 21
       - run: npm ci
+      - run: node scripts/set-version.js ${{ needs.version.outputs.version }}
+      - name: Ключ подписи APK
+        # Постоянный ключ: иначе каждая сборка подписана новым ключом и не ставится поверх старой.
+        # Можно задать свой ключ в секрете ANDROID_KEYSTORE_B64 (alias androiddebugkey, пароль android).
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          mkdir -p ~/.android
+          if [ -n "$KEYSTORE_B64" ]; then echo "$KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+          else cp signing/squad.keystore ~/.android/debug.keystore; fi
       - name: Подготовка проекта Capacitor
         run: npm run android:prepare
         env:
@@ -54,7 +87,7 @@ jobs:
           ./gradlew assembleDebug --no-daemon
       - name: Переименование
         run: |
-          VERSION=$(node -p "require('./package.json').version")
+          VERSION=${{ needs.version.outputs.version }}
           mkdir -p dist
           cp android/app/build/outputs/apk/debug/app-debug.apk "dist/SQUAD-SOUND-${VERSION}-android.apk"
       - uses: actions/upload-artifact@v4
@@ -66,29 +99,22 @@ jobs:
   release:
     name: Релиз на GitHub
     if: github.event_name == 'push'
-    needs: [windows, android]
+    needs: [version, windows, android]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: out
           merge-multiple: true
-      - name: Версия
-        id: v
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=v$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
-          fi
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.v.outputs.tag }}
-          name: SQUAD SOUND ${{ steps.v.outputs.tag }}
+          tag_name: v${{ needs.version.outputs.version }}
+          name: SQUAD SOUND v${{ needs.version.outputs.version }}
           target_commitish: ${{ github.sha }}
           make_latest: true
           files: out/*
           body: |
             **Windows:** `SQUAD-SOUND-…-setup.exe` — установщик, `SQUAD-SOUND-…-portable.exe` — без установки.
             **Android:** `SQUAD-SOUND-…-android.apk` — установите, разрешив установку из неизвестных источников.
+
+            Дальше обновляться вручную не нужно: установщик Windows скачивает новые версии сам, а Android и portable показывают кнопку «Скачать» при выходе новой версии.

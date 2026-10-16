@@ -75,6 +75,43 @@ ipcMain.handle('filter-existing', async (_e, paths) =>
 
 ipcMain.handle('version', () => app.getVersion());
 
+ipcMain.handle('open-external', (_e, url) => {
+  if (/^https:\/\/github\.com\/JEFFRIPPER\/SQUAD-SOUND\//.test(url)) shell.openExternal(url);
+});
+
+// ---------- Автообновление (GitHub Releases) ----------
+// portable-версия не умеет обновляться сама: для неё страница предлагает скачать новый файл.
+const AUTO_UPDATE = app.isPackaged && !process.env.PORTABLE_EXECUTABLE_DIR;
+let autoUpdater = null;
+let manualCheck = false;
+
+ipcMain.on('auto-update-enabled', (e) => { e.returnValue = AUTO_UPDATE; });
+
+function sendUpdate(ev) {
+  for (const w of BrowserWindow.getAllWindows()) w.webContents.send('update-status', ev);
+}
+
+function setupAutoUpdate() {
+  if (!AUTO_UPDATE) return;
+  ({ autoUpdater } = require('electron-updater'));
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on('update-available', (i) => sendUpdate({ type: 'available', version: i.version }));
+  autoUpdater.on('download-progress', (p) => sendUpdate({ type: 'progress', percent: p.percent }));
+  autoUpdater.on('update-downloaded', (i) => sendUpdate({ type: 'downloaded', version: i.version }));
+  autoUpdater.on('update-not-available', () => { sendUpdate({ type: 'none', manual: manualCheck }); manualCheck = false; });
+  autoUpdater.on('error', (err) => { console.error(err); sendUpdate({ type: 'error', manual: manualCheck }); manualCheck = false; });
+  setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 5000);
+  setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 6 * 60 * 60 * 1000);
+}
+
+ipcMain.handle('update-check', () => {
+  if (!autoUpdater) return;
+  manualCheck = true;
+  return autoUpdater.checkForUpdates().then(() => {}).catch(() => {});
+});
+ipcMain.handle('update-install', () => { if (autoUpdater) autoUpdater.quitAndInstall(); });
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -90,6 +127,7 @@ if (!app.requestSingleInstanceLock()) {
       return net.fetch(pathToFileURL(file).toString());
     });
     createWindow();
+    setupAutoUpdate();
   });
   app.on('window-all-closed', () => app.quit());
 }

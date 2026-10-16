@@ -586,6 +586,7 @@
       if (cap && cap.getPlatform && cap.getPlatform() === 'android') $('btn-add-folder').classList.add('hidden');
       $('app-version').textContent = 'v' + (window.SQUAD_VERSION || '1.0.0');
     }
+    $('btn-check-update').onclick = () => window.squadCheckUpdates && window.squadCheckUpdates(true);
     renderList();
     showMeta();
     document.addEventListener('visibilitychange', () => {
