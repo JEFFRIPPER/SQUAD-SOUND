@@ -286,7 +286,8 @@
     const plays = Object.values(stats.t).reduce((s, e) => s + e.n, 0);
 
     let h = '<header class="h-head"><div><div class="h-hello">' + greet() + '</div><div class="h-sub">' +
-      (tr.length ? 'В медиатеке ' + tr.length + ' ' + plural(tr.length, 'трек', 'трека', 'треков') : 'Медиатека пока пуста') + '</div></div></header>';
+      (tr.length ? 'В медиатеке ' + tr.length + ' ' + plural(tr.length, 'трек', 'трека', 'треков') : 'Медиатека пока пуста') + '</div></div>' +
+      '<button class="icon-btn h-rz" data-h="rz" aria-label="Что играет?">' + svg(IC.mic) + '</button></header>';
 
     // Моя волна
     h += '<div class="wave' + (wave && S.playing() ? ' live' : '') + '"><i class="b1"></i><i class="b2"></i><i class="b3"></i>' +
@@ -312,11 +313,13 @@
         const first = p.keys.map(byKey).find((t) => t && t.thumb) || byKey(p.keys[0]);
         return '<button class="h-card" data-pl="' + esc(p.id) + '">' + cardArt(first || { title: p.name, artist: '' }, true) + '<span class="h-ct">' + esc(p.name) + '</span><span class="h-ca">' + p.keys.length + ' ' + plural(p.keys.length, 'трек', 'трека', 'треков') + '</span></button>';
       }).join('') +
-      '<button class="h-card" data-h="playlists"><div class="h-art big add">' + svg(IC.plus) + '</div><span class="h-ct">Все плейлисты</span><span class="h-ca">Создать новый</span></button></div>';
+      '<button class="h-card" data-h="playlists"><div class="h-art big add">' + svg(IC.plus) + '</div><span class="h-ct">Все плейлисты</span><span class="h-ca">Создать новый</span></button>' +
+      '<button class="h-card" data-h="import"><div class="h-art big add">' + svg(IC.down) + '</div><span class="h-ct">Импорт</span><span class="h-ca">Из ссылки или списка</span></button></div>';
 
     h += '<h2 class="h-title">Источники</h2><div class="h-tiles">' +
       tile('telegram', IC.tg, 'Telegram', 'Музыка из профиля') + tile('online', IC.globe, 'Онлайн', 'Открытые источники') +
-      tile('artists', IC.mic, 'Исполнители', '') + tile('folders', IC.folder, 'Папки', '') + '</div>';
+      tile('artists', IC.mic, 'Исполнители', '') + tile('folders', IC.folder, 'Папки', '') +
+      '<button class="h-tile" data-h="rz">' + svg(IC.wave) + '<span><b>Что играет?</b><small>Узнать песню вокруг</small></span></button></div>';
 
     if (stats.total) {
       h += '<h2 class="h-title">Статистика</h2>' + wrapCards() + '<div class="h-stats">' +
@@ -350,6 +353,8 @@
     if (el.dataset.lib) { go(el.dataset.lib === 'online' ? 'search' : 'library'); S.openLib(el.dataset.lib); return; }
     const h = el.dataset.h;
     if (h === 'wrap') { openWrap(el.dataset.m); return; }
+    if (h === 'import') { openImport(); return; }
+    if (h === 'rz') { openRecognize(); return; }
     if (h === 'wave') { if (wave && S.playing()) S.togglePlay(); else startWave(); }
     else if (h === 'liked') { likedList(); S.savePlaylists(); go('library'); S.openLib('playlists', LIKED); }
     else if (h === 'playlists') { go('library'); S.openLib('playlists'); }
@@ -496,11 +501,14 @@
     if (onSheetClose) { const f = onSheetClose; onSheetClose = null; f(); }
     sheet.className = 'sheet ' + (cls || '');
     sheet.querySelector('.sheet-title').textContent = title;
-    sheet.querySelector('.sheet-body').innerHTML = html;
+    // новый узел каждый раз: обработчики кликов прошлых окон не срабатывают в новом и не копятся
+    const old = sheet.querySelector('.sheet-body'), body = old.cloneNode(false);
+    body.innerHTML = html;
+    old.replaceWith(body);
     sheetWrap.classList.remove('closing');
     sheetWrap.classList.add('show');
     onSheetClose = onClose || null;
-    return sheet.querySelector('.sheet-body');
+    return body;
   }
   function closeSheet() {
     if (!sheetWrap.classList.contains('show') || sheetWrap.classList.contains('closing')) return false;
@@ -1318,6 +1326,292 @@
   lyrUI();
   ycard.addEventListener('change', (e) => { if (e.target.id === 'lyr-auto') { lyrAuto.on = e.target.checked; ls.set('lyrAuto', lyrAuto.on); if (lyrAuto.on) lyricsPrefetch(false); } });
   ycard.addEventListener('click', (e) => { if (e.target.id === 'lyr-now') lyricsPrefetch(true); });
+
+  // ---------- Импорт плейлиста: список, файл или ссылка → треки из своей медиатеки и Telegram ----------
+  // Музыку ниоткуда не качаем: сопоставляем названия с тем, что уже есть. Ненайденное помним и досопоставляем,
+  // когда медиатека пополнится (pl.missing).
+  const nrm = (s) => String(s || '').toLowerCase().replace(/ё/g, 'е').replace(/\.(mp3|flac|wav|ogg|oga|m4a|aac|opus|wma)$/i, '')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  // без «(Remastered)», «[Live]», «feat. …» — в разных сервисах их пишут по-разному
+  const core = (s) => nrm(String(s || '').replace(/\s*[([{][^)\]}]*[)\]}]/g, ' ').replace(/\s+(feat|ft|prod)\.?\s.*$/i, ''));
+  const words = (s) => nrm(s).split(' ').filter((w) => w.length > 1);
+  function splitLine(s) {
+    s = String(s || '').replace(/^\s*\d{1,4}[.)]\s+/, '').replace(/\s*[([]?\d{1,2}:\d{2}(:\d{2})?[)\]]?\s*$/, '').trim();
+    const m = s.match(/^(.+?)\s+[-–—]\s+(.+)$/) || s.match(/^(.+?)\s*[–—]\s*(.+)$/);
+    return m ? { a: m[1].trim(), t: m[2].trim() } : { a: '', t: s };
+  }
+  let mIdx = null, mIdxN = -1;
+  function matchIndex() {
+    const tr = S.tracks;
+    if (mIdx && mIdxN === tr.length) return mIdx;
+    mIdx = new Map(); mIdxN = tr.length;
+    const add = (k, t) => { if (!k) return; let l = mIdx.get(k); if (!l) mIdx.set(k, l = []); if (!l.includes(t)) l.push(t); };
+    tr.forEach((t) => {
+      add(core(t.title), t);
+      const f = splitLine(String(t.name || '').replace(/\.[a-z0-9]{2,4}$/i, '').replace(/_/g, ' '));
+      if (f.a) { add(core(f.t), t); add(core(f.a), t); } // имя файла «Исполнитель - Название» (или наоборот)
+    });
+    return mIdx;
+  }
+  // {a, t} → трек из медиатеки или null. Порядок «исполнитель — название» в списках бывает обратным — пробуем оба.
+  function findTrack(q) {
+    const idx = matchIndex();
+    let best = null, bestS = 0;
+    const tryPair = (a, t) => {
+      const list = idx.get(core(t));
+      if (!list) return;
+      const aw = words(core(a));
+      list.forEach((tr) => {
+        const have = new Set(words(tr.artist + ' ' + tr.name));
+        const hit = aw.filter((w) => have.has(w)).length;
+        let s = aw.length ? (hit ? 2 + hit / aw.length : 0) : (list.length === 1 ? 1.5 : 0);
+        if (s && core(tr.title) === core(t)) s += 0.5;
+        if (s > bestS) { bestS = s; best = tr; }
+      });
+    };
+    tryPair(q.a, q.t);
+    if (q.a) tryPair(q.t, q.a);
+    return best;
+  }
+  function parseList(text) {
+    text = String(text || '').replace(/^﻿/, '');
+    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    if (!lines.length) return [];
+    // CSV (Exportify и похожие): ищем колонки названия и исполнителя
+    const csv = (l) => { const out = []; let cur = '', q = false; for (let i = 0; i < l.length; i++) { const c = l[i]; if (q) { if (c === '"' && l[i + 1] === '"') { cur += '"'; i++; } else if (c === '"') q = false; else cur += c; } else if (c === '"') q = true; else if (c === ',' || c === ';') { out.push(cur); cur = ''; } else cur += c; } out.push(cur); return out; };
+    const head = csv(lines[0]).map((h) => h.toLowerCase());
+    const ti = head.findIndex((h) => /^(track name|track|title|name|название|трек)$/.test(h.trim()));
+    const ai = head.findIndex((h) => /^(artist name\(s\)|artist name|artists?|исполнител[ьи])$/.test(h.trim()));
+    if (ti >= 0 && ai >= 0) return lines.slice(1).map(csv).filter((r) => r[ti]).map((r) => ({ a: (r[ai] || '').split(/[,;]/)[0].trim(), t: r[ti].trim() }));
+    const out = [];
+    for (const l of lines) {
+      if (/^#EXTM3U|^#(?!EXTINF)/i.test(l)) continue;
+      if (/^#EXTINF/i.test(l)) { out.push(splitLine(l.replace(/^#EXTINF:[^,]*,/i, ''))); continue; }
+      if (/^(\w:)?[\\/]|\.(mp3|flac|wav|ogg|oga|m4a|aac|opus|wma)$/i.test(l)) { // путь к файлу из m3u
+        if (out.length && /^#EXTINF/i.test(lines[lines.indexOf(l) - 1] || '')) continue;
+        out.push(splitLine(l.split(/[\\/]/).pop().replace(/\.[a-z0-9]{2,4}$/i, '').replace(/_/g, ' ')));
+        continue;
+      }
+      if (/^https?:\/\//i.test(l)) continue;
+      out.push(splitLine(l));
+    }
+    return out.filter((q) => q.t);
+  }
+  // Ссылка на плейлист/альбом сервиса → {name, items}. Запрос идёт с телефона (у сервисов нет CORS для WebView).
+  async function getJSON(url) {
+    const r = S.isAndroid && cap && cap.nativePromise ? await native('SquadMedia', 'get', { url }) : await fetch(url).then(async (x) => ({ status: x.status, body: await x.text() }));
+    if (!r || r.status >= 400) throw new Error('Сервис ответил ' + (r ? r.status : 'ошибкой'));
+    return r.body;
+  }
+  async function fromLink(u) {
+    let m;
+    const arts = (l) => (l || []).map((x) => x.name).filter(Boolean)[0] || '';
+    if ((m = u.match(/music\.yandex\.[a-z]+\/users\/([^/?#]+)\/playlists\/(\d+)/))) {
+      const j = JSON.parse(await getJSON('https://api.music.yandex.net/users/' + encodeURIComponent(m[1]) + '/playlists/' + m[2])).result;
+      return { name: j.title, items: (j.tracks || []).map((x) => x.track || x).filter((x) => x && x.title).map((x) => ({ a: arts(x.artists), t: x.title })) };
+    }
+    if ((m = u.match(/music\.yandex\.[a-z]+\/album\/(\d+)/))) {
+      const j = JSON.parse(await getJSON('https://api.music.yandex.net/albums/' + m[1] + '/with-tracks')).result;
+      return { name: j.title, items: [].concat(...(j.volumes || [])).map((x) => ({ a: arts(x.artists), t: x.title })) };
+    }
+    if ((m = u.match(/deezer\.com\/(?:[a-z]{2}\/)?(playlist|album)\/(\d+)/))) {
+      const j = JSON.parse(await getJSON('https://api.deezer.com/' + m[1] + '/' + m[2]));
+      if (j.error) throw new Error(j.error.message || 'Deezer');
+      return { name: j.title, items: ((j.tracks && j.tracks.data) || []).map((x) => ({ a: (x.artist && x.artist.name) || '', t: x.title })) };
+    }
+    if ((m = u.match(/open\.spotify\.com\/(?:intl-[a-z]+\/)?(playlist|album)\/([A-Za-z0-9]+)/))) {
+      const html = await getJSON('https://open.spotify.com/embed/' + m[1] + '/' + m[2]);
+      const d = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+      const e = d && JSON.parse(d[1]).props.pageProps.state.data.entity;
+      if (!e) throw new Error('Spotify не отдал список');
+      return { name: e.name || e.title, items: (e.trackList || []).map((x) => ({ a: String(x.subtitle || '').split(',')[0].trim(), t: x.title })) };
+    }
+    throw new Error('Такие ссылки не поддерживаются. Скопируйте список треков текстом');
+  }
+  function matchItems(items) {
+    const keys = [], missing = [];
+    items.forEach((q) => { const t = findTrack(q); if (t) { if (!keys.includes(t.key)) keys.push(t.key); } else missing.push(q); });
+    return { keys, missing };
+  }
+  const qText = (q) => (q.a ? q.a + ' — ' : '') + q.t;
+  function saveImported(name, items) {
+    const r = matchItems(items);
+    const pl = { id: 'i' + Date.now().toString(36), name: name || 'Импорт ' + new Date().toLocaleDateString('ru-RU'), keys: r.keys, missing: r.missing, imported: Date.now() };
+    S.playlists.push(pl); S.savePlaylists();
+    return pl;
+  }
+  // медиатека пополнилась — досопоставляем ненайденное во всех импортированных плейлистах
+  let rematchT = 0;
+  S.on('library', () => {
+    clearTimeout(rematchT);
+    rematchT = setTimeout(() => {
+      let changed = 0;
+      S.playlists.forEach((pl) => {
+        if (!pl.missing || !pl.missing.length) return;
+        const r = matchItems(pl.missing);
+        if (!r.keys.length) return;
+        r.keys.forEach((k) => { if (!pl.keys.includes(k)) pl.keys.push(k); });
+        pl.missing = r.missing; changed += r.keys.length;
+      });
+      if (changed) { S.savePlaylists(); S.toast('В импортированные плейлисты добавлено: ' + changed); }
+    }, 3000);
+  });
+  function copyText(s) {
+    (navigator.clipboard ? navigator.clipboard.writeText(s) : Promise.reject()).then(() => S.toast('Скопировано'), () => {
+      const ta = document.createElement('textarea'); ta.value = s; document.body.append(ta); ta.select();
+      try { document.execCommand('copy'); S.toast('Скопировано'); } catch (_) {} ta.remove();
+    });
+  }
+  function importResult(pl) {
+    const total = pl.keys.length + pl.missing.length;
+    const body = openSheet('«' + pl.name + '»', '<p class="hint">Найдено у вас <b>' + pl.keys.length + '</b> из ' + total + '.' +
+      (pl.missing.length ? ' Остальное плейлист подхватит сам, когда эти треки появятся в медиатеке или в Telegram.' : '') + '</p>' +
+      '<div class="chips">' + (pl.keys.length ? '<button class="chip" data-im="play">' + svg(IC.play) + ' Слушать</button><button class="chip" data-im="open">Открыть плейлист</button>' : '') +
+      (pl.missing.length ? '<button class="chip" data-im="copy">Скопировать ненайденные</button>' : '') + '</div>' +
+      (pl.missing.length ? '<ol class="im-miss">' + pl.missing.slice(0, 300).map((q) => '<li>' + esc(qText(q)) + '</li>').join('') + '</ol>' : ''), 'tall');
+    body.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-im]');
+      if (!b) return;
+      if (b.dataset.im === 'play') { closeSheet(); S.play(pl.keys, 0, false); }
+      else if (b.dataset.im === 'open') { closeSheet(); go('library'); S.openLib('playlists', pl.id); }
+      else if (b.dataset.im === 'copy') copyText(pl.missing.map(qText).join('\n'));
+    });
+  }
+  function openImport() {
+    const body = openSheet('Импорт плейлиста', '<p class="hint">Вставьте ссылку на плейлист или альбом (Яндекс Музыка, Deezer, Spotify) или список треков — по строке «Исполнитель — Название». Подойдёт и файл .m3u, .csv или .txt. Треки ищутся в вашей медиатеке и Telegram.</p>' +
+      '<input class="search lfm-in" id="im-name" placeholder="Название плейлиста (необязательно)" autocomplete="off">' +
+      '<textarea class="search im-text" id="im-text" rows="7" placeholder="https://music.yandex.ru/users/…/playlists/…&#10;или&#10;Кино — Группа крови&#10;Земфира — Хочешь?"></textarea>' +
+      '<p class="hint" id="im-msg"></p>' +
+      '<div class="chips"><button class="btn primary" data-im="go">Найти треки</button><button class="chip" data-im="file">Из файла</button><button class="chip" data-im="paste">Вставить</button></div>', 'tall');
+    const msg = body.querySelector('#im-msg'), ta = body.querySelector('#im-text'), nm = body.querySelector('#im-name');
+    let busy = false;
+    body.addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-im]');
+      if (!b || busy) return;
+      const k = b.dataset.im;
+      if (k === 'paste') { try { ta.value = await navigator.clipboard.readText(); } catch (_) { S.toast('Вставьте долгим нажатием в поле'); } return; }
+      if (k === 'file') {
+        const inp = document.createElement('input');
+        inp.type = 'file'; inp.accept = '.m3u,.m3u8,.csv,.txt,text/plain,text/csv,audio/x-mpegurl';
+        inp.onchange = async () => { const f = inp.files && inp.files[0]; if (!f) return; ta.value = await f.text(); if (!nm.value) nm.value = f.name.replace(/\.[^.]+$/, ''); };
+        inp.click();
+        return;
+      }
+      const v = ta.value.trim();
+      if (!v) { msg.textContent = 'Вставьте ссылку или список'; return; }
+      busy = true;
+      try {
+        let name = nm.value.trim(), items;
+        const url = /^https?:\/\/\S+$/.test(v) ? v : '';
+        if (url) {
+          msg.textContent = 'Загружаю список…';
+          const r = await fromLink(url);
+          items = r.items; name = name || r.name;
+        } else items = parseList(v);
+        if (!items.length) { msg.textContent = 'Не нашёл в тексте ни одного трека'; return; }
+        importResult(saveImported(name.slice(0, 80), items.slice(0, 5000)));
+      } catch (err) {
+        msg.textContent = (err && err.message) || 'Не получилось загрузить ссылку';
+      } finally { busy = false; }
+    });
+  }
+
+  // ---------- «Что играет?»: 10 секунд с микрофона → AudD ----------
+  // Свободного распознавания без ключа нет: AudD даёт бесплатные запросы, свой ключ (api_token) вставляется в настройках.
+  const audd = Object.assign({ token: '', hist: [] }, ls.get('audd', {}));
+  const auddSave = () => ls.set('audd', audd);
+  const AUDD = 'https://api.audd.io/';
+  const REC_SEC = 10;
+  let rec = null, recGen = 0; // recGen: закрыли окно — результат старой записи никуда не отправляем
+  function b64(blob) {
+    return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = rej; r.readAsDataURL(blob); });
+  }
+  async function auddCall(audio) {
+    const body = 'api_token=' + encodeURIComponent(audd.token) + '&return=deezer&audio=' + encodeURIComponent(audio);
+    let text;
+    if (S.isAndroid && cap && cap.nativePromise) text = (await native('SquadMedia', 'post', { url: AUDD, body })).body;
+    else text = await (await fetch(AUDD, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body })).text();
+    const j = JSON.parse(text);
+    if (j.status !== 'success') {
+      const c = j.error && j.error.error_code;
+      throw new Error(c === 900 ? 'Ключ AudD не подходит — проверьте его в настройках' : c === 901 ? 'Бесплатные распознавания без ключа на сегодня кончились. Вставьте свой ключ AudD в настройках' : (j.error && j.error.error_message) || 'AudD не ответил');
+    }
+    return j.result;
+  }
+  function recStop() { if (rec) { const r = rec; rec = null; try { if (r.mr.state !== 'inactive') r.mr.stop(); } catch (_) {} r.stream.getTracks().forEach((t) => t.stop()); clearInterval(r.tick); } }
+  async function recognize(body) {
+    const box = body.querySelector('.rz');
+    const show = (h) => { box.innerHTML = h; };
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) { show('<p class="hint">Запись звука здесь недоступна</p>'); return; }
+    const my = ++recGen;
+    if (S.playing()) S.pause(); // иначе услышим сами себя
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } }); }
+    catch (_) { show('<p class="hint">Нет доступа к микрофону. Разрешите его приложению в настройках телефона.</p><div class="chips"><button class="btn primary" data-rz="again">Ещё раз</button></div>'); return; }
+    if (my !== recGen) { stream.getTracks().forEach((t) => t.stop()); return; }
+    const chunks = [];
+    const mr = new MediaRecorder(stream);
+    rec = { mr, stream, tick: 0 };
+    let left = REC_SEC;
+    show('<div class="rz-pulse">' + svg(IC.mic) + '</div><p class="rz-t">Слушаю… <b class="rz-n">' + left + '</b></p><p class="hint">Поднесите телефон к источнику звука</p>');
+    rec.tick = setInterval(() => { left--; const n = box.querySelector('.rz-n'); if (n) n.textContent = Math.max(0, left); }, 1000);
+    mr.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    const done = new Promise((res) => { mr.onstop = res; });
+    mr.start();
+    setTimeout(() => { if (rec && rec.mr === mr) recStop(); }, REC_SEC * 1000);
+    await done;
+    recStop();
+    if (my !== recGen || !chunks.length) return;
+    show('<div class="tg-spin"></div><p class="rz-t">Узнаю…</p>');
+    let r;
+    try { r = await auddCall(await b64(new Blob(chunks, { type: mr.mimeType || 'audio/webm' }))); }
+    catch (e) { if (my === recGen) show('<p class="hint">' + esc(e.message || 'Не получилось') + '</p><div class="chips"><button class="btn primary" data-rz="again">Ещё раз</button></div>'); return; }
+    if (my !== recGen) return;
+    if (!r) { show('<p class="hint">Не узнал. Подойдите ближе к звуку или попробуйте в другом месте песни.</p><div class="chips"><button class="btn primary" data-rz="again">Ещё раз</button></div>'); return; }
+    const item = { a: r.artist || '', t: r.title || '', al: r.album || '', y: String(r.release_date || '').slice(0, 4), at: Date.now(),
+      art: (r.deezer && r.deezer.album && r.deezer.album.cover_medium) || '', link: r.song_link || '' };
+    audd.hist = [item].concat(audd.hist.filter((h) => !(h.a === item.a && h.t === item.t))).slice(0, 50); auddSave();
+    show(rzCard(item) + '<div class="chips"><button class="chip" data-rz="again">Ещё раз</button></div>');
+  }
+  function rzCard(h) {
+    const mine = findTrack({ a: h.a, t: h.t });
+    return '<div class="rz-res">' + (h.art ? '<img class="rz-art" src="' + esc(h.art) + '" alt="">' : '<div class="rz-art">' + svg(IC.mic) + '</div>') +
+      '<div><b>' + esc(h.t) + '</b><span>' + esc(h.a) + '</span>' + (h.al ? '<small>' + esc(h.al) + (h.y ? ' · ' + esc(h.y) : '') + '</small>' : '') + '</div></div>' +
+      '<div class="chips">' + (mine ? '<button class="btn primary" data-rz="play" data-k="' + esc(mine.key) + '">' + svg(IC.play) + ' Есть у вас — включить</button>' : '<p class="hint">В медиатеке и Telegram этого трека пока нет</p>') +
+      '<button class="chip" data-rz="copy" data-q="' + esc(qText(h)) + '">Скопировать название</button></div>';
+  }
+  function openRecognize() {
+    const body = openSheet('Что играет?', '<div class="rz"></div>' + (audd.hist.length ? '<h4 class="rz-h">Узнанные раньше</h4><div class="rz-hist">' +
+      audd.hist.map((h, i) => '<button class="rz-row" data-rzh="' + i + '"><b>' + esc(h.t) + '</b><span>' + esc(h.a) + '</span></button>').join('') +
+      '</div><div class="chips"><button class="chip" data-rz="pl">Плейлист из узнанных</button></div>' : ''), 'tall', () => { recGen++; recStop(); });
+    body.addEventListener('click', (e) => {
+      const h = e.target.closest('[data-rzh]');
+      if (h) { body.querySelector('.rz').innerHTML = rzCard(audd.hist[+h.dataset.rzh]); body.scrollTop = 0; return; }
+      const b = e.target.closest('[data-rz]');
+      if (!b) return;
+      const k = b.dataset.rz;
+      if (k === 'again') recognize(body);
+      else if (k === 'play') { closeSheet(); S.play([b.dataset.k], 0, false); }
+      else if (k === 'copy') copyText(b.dataset.q);
+      else if (k === 'pl') importResult(saveImported('Узнанные песни', audd.hist.map((x) => ({ a: x.a, t: x.t }))));
+    });
+    recognize(body);
+  }
+  const zcard = document.createElement('div');
+  zcard.className = 'card';
+  kcard.before(zcard);
+  function auddUI() {
+    zcard.innerHTML = '<h3>Распознавание песни</h3><p class="hint">«Что играет?» на главной слушает 10 секунд и узнаёт песню через сервис AudD. ' +
+      'Без ключа даётся несколько бесплатных распознаваний в день; свой бесплатный ключ (api_token) берётся на dashboard.audd.io.</p>' +
+      '<input class="search lfm-in" id="audd-key" placeholder="api_token AudD (необязательно)" autocomplete="off" spellcheck="false" value="' + esc(audd.token) + '">' +
+      '<div class="chips"><button class="chip" id="audd-get">Получить ключ</button><button class="chip" id="audd-try">Узнать песню</button></div>';
+  }
+  auddUI();
+  zcard.addEventListener('change', (e) => { if (e.target.id === 'audd-key') { audd.token = e.target.value.trim(); auddSave(); S.toast(audd.token ? 'Ключ AudD сохранён' : 'Ключ AudD удалён'); } });
+  zcard.addEventListener('click', (e) => {
+    if (e.target.id === 'audd-get') openExt('https://dashboard.audd.io/');
+    else if (e.target.id === 'audd-try') openRecognize();
+  });
 
   // ---------- Кнопка «Назад» Android ----------
   function back() {

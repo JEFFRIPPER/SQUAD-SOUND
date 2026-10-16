@@ -44,6 +44,9 @@ const perms = [
   '<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />',
   '<uses-permission android:name="android.permission.WAKE_LOCK" />',
   '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />',
+  // «Что играет?» — запись 10 секунд с микрофона (запрос показывает Capacitor при первом нажатии)
+  '<uses-permission android:name="android.permission.RECORD_AUDIO" />',
+  '<uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />',
 ];
 for (const p of perms) {
   const name = p.match(/name="([^"]+)"/)[1];
