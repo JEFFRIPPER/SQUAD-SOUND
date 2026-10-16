@@ -307,9 +307,9 @@
   }
 
   // Добавить найденный трек: скачать в кэш и запомнить в списке found
-  async function add(res, onProgress) {
+  async function add(res, onProgress, partKb) {
     const t = { key: res.key, name: res.name, title: res.title, artist: res.artist, duration: res.duration, size: res.size, mime: res.mime, folder: res.folder, tg: res.tg };
-    await blob(t, onProgress);
+    await blob(t, onProgress, null, partKb);
     const list = ls.get('found', []).filter((x) => x.key !== t.key);
     list.push(t);
     ls.set('found', list);

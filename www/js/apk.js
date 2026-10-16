@@ -256,6 +256,7 @@
     return fresh.concat(recent).map((t) => t.key);
   }
   function startWave() {
+    if (mood === 'net') { netWave(); return; }
     const keys = wavePick();
     if (!keys.length) { S.toast('Сначала добавьте музыку'); return; }
     wave = true;
@@ -265,7 +266,7 @@
   }
   // бесконечная волна: под конец очереди подкладываем новую порцию
   S.on('track', () => {
-    if (!wave) return;
+    if (!wave || mood === 'net') return;
     const q = S.queueInfo;
     if (q.len - q.pos <= 2) S.append(wavePick());
   });
@@ -279,7 +280,7 @@
     const genres = {};
     tr.forEach((t) => { if (t.genre) genres[t.genre] = (genres[t.genre] || 0) + 1; });
     const topGenres = Object.keys(genres).sort((a, b) => genres[b] - genres[a]).slice(0, 4);
-    const moods = MOODS.concat(topGenres.map((g) => ['g:' + g, g]));
+    const moods = MOODS.concat(tgReady() || mood === 'net' ? [['net', 'Похожее онлайн']] : [], topGenres.map((g) => ['g:' + g, g]));
     const pls = S.playlists;
     const artists = {};
     Object.keys(stats.t).forEach((k) => { const e = stats.t[k]; if (e.artist && byKey(k)) artists[e.artist] = (artists[e.artist] || 0) + e.sec; });
@@ -293,7 +294,7 @@
 
     // Моя волна
     h += '<div class="wave' + (wave && S.playing() ? ' live' : '') + '"><i class="b1"></i><i class="b2"></i><i class="b3"></i>' +
-      '<div class="wave-in"><div class="wave-t">Моя волна</div><div class="wave-s">Бесконечный поток из вашей музыки под настроение</div></div>' +
+      '<div class="wave-in"><div class="wave-t">Моя волна</div><div class="wave-s">' + (mood === 'net' ? 'Новая музыка, похожая на вашу, из Telegram' : 'Бесконечный поток из вашей музыки под настроение') + '</div></div>' +
       '<button class="wave-play" data-h="wave" aria-label="Запустить волну">' + svg(IC.play) + '</button></div>';
     h += '<div class="h-chips">' + moods.map((m) => '<button class="chip' + (m[0] === mood ? ' on' : '') + '" data-mood="' + esc(m[0]) + '">' + esc(m[1]) + '</button>').join('') + '</div>';
 
@@ -1593,6 +1594,152 @@
       if (changed) { S.savePlaylists(); S.toast('В импортированные плейлисты добавлено: ' + changed); }
     }, 3000);
   });
+  // ---------- Музыка из Telegram по названию: волна «Похожее онлайн» и докачка импорта ----------
+  function tgReady() { const tg = window.SquadTG; return !!(tg && tg.search && tg.state && tg.state.phase === 'ready'); }
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // {a, t} → лучший файл из поиска по всему Telegram: название совпадает, исполнитель есть в тегах/имени, из равных — выше битрейт
+  async function tgBest(q) {
+    const r = await window.SquadTG.search(core(q.a + ' ' + q.t));
+    const want = core(q.t), aw = words(core(q.a));
+    let best = null, bestS = 0;
+    for (const x of r.results) {
+      if (x.duration && (x.duration < 50 || x.duration > 900)) continue;
+      const tt = core(x.title), hay = new Set(words(x.artist + ' ' + x.title + ' ' + x.name));
+      let s = tt === want ? 3 : tt && want && (tt.includes(want) || want.includes(tt)) ? 2 : 0;
+      if (!s) { const tw = words(want); s = tw.length && tw.filter((w) => hay.has(w)).length / tw.length >= 0.75 ? 1 : 0; }
+      if (!s) continue;
+      if (aw.length) { const hit = aw.filter((w) => hay.has(w)).length; if (!hit) continue; s += hit / aw.length; }
+      if (/remix|ремикс|cover|кавер|karaoke|минус|speed ?up|slowed|nightcore|8d/i.test(x.title + ' ' + x.name) && !/remix|ремикс|cover|кавер/i.test(q.t)) s -= 1.5;
+      s += Math.min(0.5, (x.size || 0) / Math.max(1, x.duration || 240) / 80000); // ~320 кбит/с даёт +0,5
+      if (s > bestS) { bestS = s; best = x; }
+    }
+    return bestS >= 2 ? best : null;
+  }
+  // скачать в медиатеку; пока играет музыка — мелкими кусками, чтобы не было треска
+  async function tgFetch(q, folder) {
+    const x = await tgBest(q);
+    if (!x) return null;
+    if (S.byKey(x.key)) return x.key;
+    return S.addTg(Object.assign({}, x, { folder }), S.playing() ? 128 : 512);
+  }
+
+  // Рекомендации: Last.fm (если введён свой ключ API), иначе Deezer — похожие исполнители и их хиты
+  const NET_SEEN = 600;
+  const netSeen = new Set(ls.get('netSeen', []));
+  const seenKey = (q) => core(q.a) + '|' + core(q.t);
+  function netSeeds() {
+    const liked = new Set((S.playlists.find((p) => p.id === LIKED) || { keys: [] }).keys);
+    const st = (k) => stats.t[k] || { n: 0, last: 0 };
+    const pool = S.tracks.filter((t) => t.artist && t.artist !== 'Неизвестный исполнитель' && (liked.has(t.key) || st(t.key).n));
+    pool.sort((a, b) => (st(b.key).n + (liked.has(b.key) ? 3 : 0) + (st(b.key).last > Date.now() - 7 * 864e5 ? 2 : 0)) -
+      (st(a.key).n + (liked.has(a.key) ? 3 : 0) + (st(a.key).last > Date.now() - 7 * 864e5 ? 2 : 0)));
+    const top = pool.slice(0, 25);
+    if (!top.length) top.push(...S.tracks.filter((t) => t.artist && t.artist !== 'Неизвестный исполнитель').slice(-25));
+    return shuffle(top).slice(0, 3).map((t) => ({ a: t.artist, t: t.title }));
+  }
+  async function lfmGet(params) {
+    const u = LFM + '?' + Object.entries(Object.assign({ api_key: lfm.key, format: 'json' }, params)).map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
+    const j = JSON.parse(await getJSON(u));
+    if (j.error) throw new Error(j.message || 'Last.fm ' + j.error);
+    return j;
+  }
+  async function netRecs() {
+    const seeds = netSeeds();
+    if (!seeds.length) throw new Error('Послушайте или лайкните что-нибудь — волна подберёт похожее');
+    const out = [];
+    const push = (a, t) => { if (a && t) out.push({ a: String(a), t: String(t) }); };
+    if (/^[0-9a-f]{32}$/i.test(lfm.key)) {
+      for (const sd of seeds) {
+        const j = await lfmGet({ method: 'track.getSimilar', artist: sd.a, track: sd.t, limit: 25, autocorrect: 1 }).catch(() => null);
+        ((j && j.similartracks && j.similartracks.track) || []).forEach((x) => push(x.artist && x.artist.name, x.name));
+      }
+      if (out.length < 10) {
+        const j = await lfmGet({ method: 'artist.getSimilar', artist: seeds[0].a, limit: 10, autocorrect: 1 }).catch(() => null);
+        const arts = shuffle(((j && j.similarartists && j.similarartists.artist) || []).map((x) => x.name)).slice(0, 4);
+        for (const a of arts) {
+          const k = await lfmGet({ method: 'artist.getTopTracks', artist: a, limit: 6, autocorrect: 1 }).catch(() => null);
+          ((k && k.toptracks && k.toptracks.track) || []).forEach((x) => push(a, x.name));
+        }
+      }
+    }
+    if (out.length < 10) {
+      const DZ = 'https://api.deezer.com/';
+      for (const sd of seeds.slice(0, 2)) {
+        const ar = JSON.parse(await getJSON(DZ + 'search/artist?limit=1&q=' + encodeURIComponent(sd.a)));
+        const id = ar.data && ar.data[0] && ar.data[0].id;
+        if (!id) continue;
+        const rel = JSON.parse(await getJSON(DZ + 'artist/' + id + '/related?limit=12'));
+        for (const x of shuffle((rel.data || []).slice()).slice(0, 4)) {
+          const top = JSON.parse(await getJSON(DZ + 'artist/' + x.id + '/top?limit=5'));
+          (top.data || []).forEach((y) => push(y.artist && y.artist.name, y.title));
+        }
+      }
+    }
+    const seen = new Set();
+    return shuffle(out).filter((q) => {
+      const k = seenKey(q);
+      if (seen.has(k) || netSeen.has(k)) return false;
+      seen.add(k);
+      return !findTrack(q); // уже есть в медиатеке — это не «новое»
+    });
+  }
+  const net = { busy: false, recs: [], keys: new Set() };
+  // докачать n новых треков в волну. first — включить первый найденный
+  async function netFill(n, first) {
+    if (net.busy) return;
+    net.busy = true;
+    let got = 0;
+    try {
+      while (got < n) {
+        if (!net.recs.length) net.recs = await netRecs();
+        const q = net.recs.shift();
+        if (!q) { if (first) S.toast('Похожего пока не нашлось — послушайте ещё что-нибудь'); break; }
+        netSeen.add(seenKey(q)); ls.set('netSeen', [...netSeen].slice(-NET_SEEN));
+        if (first && !got) S.toast('Ищу в Telegram: ' + qText(q));
+        const key = await tgFetch(q, 'Telegram/Волна').catch((e) => { console.warn('Волна:', e); return null; });
+        await sleep(1200); // поиск по всему Telegram — не чаще, иначе FLOOD_WAIT
+        if (!key || !wave) continue;
+        net.keys.add(key);
+        got++;
+        if (first && got === 1) S.play([key], 0, false); else S.append([key]);
+      }
+    } catch (e) {
+      S.toast('Волна: ' + (e.message || 'нет связи с сервисом рекомендаций'));
+    } finally { net.busy = false; }
+  }
+  function netWave() {
+    if (!tgReady()) { S.toast('Для «Похожее онлайн» войдите в Telegram (Настройки)'); return; }
+    wave = true; net.keys.clear();
+    renderHome();
+    netFill(3, true);
+  }
+  S.on('track', () => {
+    const t = S.cur(), q = S.queueInfo;
+    if (wave && mood === 'net' && t && net.keys.has(t.key) && q.len - q.pos <= 2) netFill(3);
+  });
+
+  // докачка ненайденного из импортированного плейлиста
+  const imp = { busy: null };
+  async function impFetch(pl, onStep) {
+    if (imp.busy) return;
+    imp.busy = pl.id;
+    let ok = 0;
+    try {
+      for (const q of pl.missing.slice()) {
+        const key = await tgFetch(q, 'Telegram/Импорт').catch((e) => { console.warn('Импорт:', e); return null; });
+        if (key) {
+          if (!pl.keys.includes(key)) pl.keys.push(key);
+          pl.missing = pl.missing.filter((x) => x !== q);
+          S.savePlaylists(); ok++;
+        }
+        if (onStep) onStep(ok);
+        await sleep(1200);
+      }
+    } finally { imp.busy = null; }
+    S.toast('«' + pl.name + '»: докачано из Telegram ' + ok + (pl.missing.length ? ', не нашлось ' + pl.missing.length : ''));
+    return ok;
+  }
+
   function copyText(s) {
     (navigator.clipboard ? navigator.clipboard.writeText(s) : Promise.reject()).then(() => S.toast('Скопировано'), () => {
       const ta = document.createElement('textarea'); ta.value = s; document.body.append(ta); ta.select();
@@ -1604,7 +1751,8 @@
     const body = openSheet('«' + pl.name + '»', '<p class="hint">Найдено у вас <b>' + pl.keys.length + '</b> из ' + total + '.' +
       (pl.missing.length ? ' Остальное плейлист подхватит сам, когда эти треки появятся в медиатеке или в Telegram.' : '') + '</p>' +
       '<div class="chips">' + (pl.keys.length ? '<button class="chip" data-im="play">' + svg(IC.play) + ' Слушать</button><button class="chip" data-im="open">Открыть плейлист</button>' : '') +
-      (pl.missing.length ? '<button class="chip" data-im="copy">Скопировать ненайденные</button>' : '') + '</div>' +
+      (pl.missing.length && tgReady() ? '<button class="btn primary" data-im="tg">' + svg(IC.tg) + ' Докачать из Telegram</button>' : '') +
+      (pl.missing.length ? '<button class="chip" data-im="copy">Скопировать ненайденные</button>' : '') + '</div><p class="hint im-tg"></p>' +
       (pl.missing.length ? '<ol class="im-miss">' + pl.missing.slice(0, 300).map((q) => '<li>' + esc(qText(q)) + '</li>').join('') + '</ol>' : ''), 'tall');
     body.addEventListener('click', (e) => {
       const b = e.target.closest('[data-im]');
@@ -1612,6 +1760,13 @@
       if (b.dataset.im === 'play') { closeSheet(); S.play(pl.keys, 0, false); }
       else if (b.dataset.im === 'open') { closeSheet(); go('library'); S.openLib('playlists', pl.id); }
       else if (b.dataset.im === 'copy') copyText(pl.missing.map(qText).join('\n'));
+      else if (b.dataset.im === 'tg') {
+        if (imp.busy) { S.toast('Уже докачиваю другой плейлист'); return; }
+        b.disabled = true;
+        const n = pl.missing.length, st = body.querySelector('.im-tg');
+        st.textContent = 'Ищу в Telegram… Можно закрыть — докачка продолжится.';
+        impFetch(pl, (ok) => { st.textContent = 'Скачано ' + ok + ' из ' + n + '…'; }).then(() => { if (st.isConnected) importResult(pl); });
+      }
     });
   }
   function openImport() {
@@ -1619,13 +1774,16 @@
       '<input class="search lfm-in" id="im-name" placeholder="Название плейлиста (необязательно)" autocomplete="off">' +
       '<textarea class="search im-text" id="im-text" rows="7" placeholder="https://music.yandex.ru/users/…/playlists/…&#10;или&#10;Кино — Группа крови&#10;Земфира — Хочешь?"></textarea>' +
       '<p class="hint" id="im-msg"></p>' +
-      '<div class="chips"><button class="btn primary" data-im="go">Найти треки</button><button class="chip" data-im="file">Из файла</button><button class="chip" data-im="paste">Вставить</button></div>', 'tall');
+      '<div class="chips"><button class="btn primary" data-im="go">Найти треки</button><button class="chip" data-im="file">Из файла</button><button class="chip" data-im="paste">Вставить</button></div>' +
+      (() => { const l = S.playlists.filter((x) => x.missing && x.missing.length); return l.length ? '<h4 class="im-old">Не хватает треков</h4><div class="sheet-list">' +
+        l.map((x) => '<button data-im="old" data-pl="' + esc(x.id) + '">' + svg(IC.queue) + esc(x.name) + ' · ' + x.missing.length + '</button>').join('') + '</div>' : ''; })(), 'tall');
     const msg = body.querySelector('#im-msg'), ta = body.querySelector('#im-text'), nm = body.querySelector('#im-name');
     let busy = false;
     body.addEventListener('click', async (e) => {
       const b = e.target.closest('[data-im]');
       if (!b || busy) return;
       const k = b.dataset.im;
+      if (k === 'old') { const pl = S.playlists.find((x) => x.id === b.dataset.pl); if (pl) importResult(pl); return; }
       if (k === 'paste') { try { ta.value = await navigator.clipboard.readText(); } catch (_) { S.toast('Вставьте долгим нажатием в поле'); } return; }
       if (k === 'file') {
         const inp = document.createElement('input');

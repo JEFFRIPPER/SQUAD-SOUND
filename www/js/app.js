@@ -1501,6 +1501,18 @@
   }
 
   // Добавить найденное в медиатеку; play — сразу включить
+  // найденный в Telegram трек → скачать и добавить в медиатеку. partKb — см. TG.blob
+  async function tgAdd(res, onProgress, partKb) {
+    const d = await TG.add(res, onProgress, partKb);
+    if (byKey.has(d.key)) return d;
+    const t = tgTrack(d);
+    const h = store.get('hidden', []);
+    if (h.includes(d.key)) store.set('hidden', h.filter((k) => k !== d.key)); // удаляли раньше — теперь добавили снова
+    addTracks([t], true);
+    t.metaDone = false; loadMeta(t).then(() => scheduleRender()).catch(() => {}); // теги и обложка из файла
+    return d;
+  }
+
   async function webAdd(res, play) {
     const group = (t) => (res.tg ? t.tg && t.tg.msg : t.web); // очередь — из таких же найденных треков
     if (byKey.has(res.key)) {
@@ -1515,12 +1527,7 @@
       let d;
       if (res.tg) {
         let last = -1;
-        d = await TG.add(res, (p) => { const pct = Math.floor(p * 100); if (pct - last >= 20) { last = pct; toast('Скачиваю «' + res.title + '»: ' + pct + '%'); } });
-        const t = tgTrack(d);
-        const h = store.get('hidden', []);
-        if (h.includes(d.key)) store.set('hidden', h.filter((k) => k !== d.key)); // удаляли раньше — теперь добавили снова
-        addTracks([t], true);
-        t.metaDone = false; loadMeta(t).then(() => scheduleRender()).catch(() => {}); // теги и обложка из файла
+        d = await tgAdd(res, (p) => { const pct = Math.floor(p * 100); if (pct - last >= 20) { last = pct; toast('Скачиваю «' + res.title + '»: ' + pct + '%'); } });
       } else {
         d = await WEB.add(res);
         addTracks([webTrack(d)], true);
@@ -1840,6 +1847,7 @@
     upNext() { const p = nextPos(true); return p >= 0 && p !== qpos ? byKey.get(queue[p]) || null : null; },
     togglePlay, step, showTab, openLib, toast, fmt, esc, renderLib, savePlaylists, enqueue, playNext,
     webSearch: (q) => webSearch(q),
+    addTg: async (res, partKb) => (await tgAdd(res, null, partKb)).key,
     on: (type, cb) => appEvents.addEventListener(type, cb),
   };
 

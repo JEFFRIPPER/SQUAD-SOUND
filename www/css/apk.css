@@ -329,3 +329,4 @@ html.apk .hifi-st { margin: 10px 0 0; font-size: 13px; color: var(--muted); }
 html.apk .hifi-st.on { color: var(--accent); font-weight: 600; }
 .spd-chips { flex-wrap: nowrap; justify-content: space-between; margin-bottom: 10px; }
 .spd-chips .chip { padding-left: 10px; padding-right: 10px; }
+.im-old { margin: 18px 0 0; font-size: 14px; color: var(--muted); font-weight: 600; }
