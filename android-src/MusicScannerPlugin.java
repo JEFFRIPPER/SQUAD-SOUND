@@ -19,6 +19,7 @@ import android.os.Build;
 import android.provider.MediaStore;
 import android.util.Base64;
 import android.util.Size;
+import androidx.activity.OnBackPressedCallback;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.IntentSenderRequest;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -56,6 +57,20 @@ public class MusicScannerPlugin extends Plugin {
         deleteLauncher = getActivity().registerForActivityResult(
             new ActivityResultContracts.StartIntentSenderForResult(),
             (res) -> onDeleteConfirmed(res.getResultCode() == Activity.RESULT_OK));
+        // Кнопка «Назад» уходит в интерфейс (js/apk.js): закрыть плеер/окно, вернуться на главную или свернуть
+        getActivity().getOnBackPressedDispatcher().addCallback(getActivity(), new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                bridge.triggerWindowJSEvent("squadBack");
+            }
+        });
+    }
+
+    // Свернуть приложение, не закрывая его: музыка продолжает играть
+    @PluginMethod
+    public void minimize(PluginCall call) {
+        getActivity().runOnUiThread(() -> getActivity().moveTaskToBack(true));
+        call.resolve();
     }
 
     private void deleteDone(PluginCall call, boolean deleted) {
