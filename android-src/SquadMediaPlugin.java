@@ -126,7 +126,7 @@ public class SquadMediaPlugin extends Plugin {
     // Запросы мимо CORS WebView — только к своему списку адресов:
     // POST формы — скробблинг Last.fm и распознавание песни AudD; GET — плейлист по ссылке (Яндекс Музыка, Deezer, Spotify).
     private static final String[] POST_OK = { "https://ws.audioscrobbler.com/", "https://api.audd.io/" };
-    private static final String[] GET_OK = { "https://api.music.yandex.net/", "https://api.deezer.com/", "https://open.spotify.com/embed/" };
+    private static final String[] GET_OK = { "https://ws.audioscrobbler.com/2.0/?", "https://api.music.yandex.net/", "https://api.deezer.com/", "https://open.spotify.com/embed/" };
 
     private static boolean allowed(String url, String[] list) {
         for (String p : list) if (url.startsWith(p)) return true;

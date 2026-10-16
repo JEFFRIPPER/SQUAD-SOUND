@@ -765,6 +765,7 @@
     if (qpos < 0) { queue = [key]; qpos = 0; playAt(0); return; }
     queue.splice(qpos + 1, 0, key);
     toast('Будет следующим');
+    emitApp('queue');
     if (view.tab === 'queue') renderLib();
   }
 
@@ -773,6 +774,7 @@
     if (qpos < 0) { queue = [key]; qpos = 0; playAt(0); return; }
     queue.push(key);
     toast('Добавлено в очередь');
+    emitApp('queue');
     if (view.tab === 'queue') renderLib();
   }
 
@@ -1076,6 +1078,7 @@
     $('btn-shuffle').classList.toggle('on', settings.shuffle);
     $('btn-repeat').classList.toggle('on', settings.repeat !== 'off');
     $('repeat-one').classList.toggle('show', settings.repeat === 'one');
+    emitApp('queue');
   }
 
   $('volume').addEventListener('input', (e) => { paintRange(e.target); engine.set('volume', +e.target.value); saveFx(); });
@@ -1498,6 +1501,18 @@
   }
 
   // Добавить найденное в медиатеку; play — сразу включить
+  // найденный в Telegram трек → скачать и добавить в медиатеку. partKb — см. TG.blob
+  async function tgAdd(res, onProgress, partKb) {
+    const d = await TG.add(res, onProgress, partKb);
+    if (byKey.has(d.key)) return d;
+    const t = tgTrack(d);
+    const h = store.get('hidden', []);
+    if (h.includes(d.key)) store.set('hidden', h.filter((k) => k !== d.key)); // удаляли раньше — теперь добавили снова
+    addTracks([t], true);
+    t.metaDone = false; loadMeta(t).then(() => scheduleRender()).catch(() => {}); // теги и обложка из файла
+    return d;
+  }
+
   async function webAdd(res, play) {
     const group = (t) => (res.tg ? t.tg && t.tg.msg : t.web); // очередь — из таких же найденных треков
     if (byKey.has(res.key)) {
@@ -1512,12 +1527,7 @@
       let d;
       if (res.tg) {
         let last = -1;
-        d = await TG.add(res, (p) => { const pct = Math.floor(p * 100); if (pct - last >= 20) { last = pct; toast('Скачиваю «' + res.title + '»: ' + pct + '%'); } });
-        const t = tgTrack(d);
-        const h = store.get('hidden', []);
-        if (h.includes(d.key)) store.set('hidden', h.filter((k) => k !== d.key)); // удаляли раньше — теперь добавили снова
-        addTracks([t], true);
-        t.metaDone = false; loadMeta(t).then(() => scheduleRender()).catch(() => {}); // теги и обложка из файла
+        d = await tgAdd(res, (p) => { const pct = Math.floor(p * 100); if (pct - last >= 20) { last = pct; toast('Скачиваю «' + res.title + '»: ' + pct + '%'); } });
       } else {
         d = await WEB.add(res);
         addTracks([webTrack(d)], true);
@@ -1832,9 +1842,12 @@
       if (shuffle != null) settings.shuffle = was;
       playAt(qpos);
     },
-    append(keys) { queue.push(...keys); if (view.tab === 'queue') renderLib(); },
+    append(keys) { queue.push(...keys); emitApp('queue'); if (view.tab === 'queue') renderLib(); },
+    // что заиграет после текущего (при «повтор выкл» в конце очереди — ничего)
+    upNext() { const p = nextPos(true); return p >= 0 && p !== qpos ? byKey.get(queue[p]) || null : null; },
     togglePlay, step, showTab, openLib, toast, fmt, esc, renderLib, savePlaylists, enqueue, playNext,
     webSearch: (q) => webSearch(q),
+    addTg: async (res, partKb) => (await tgAdd(res, null, partKb)).key,
     on: (type, cb) => appEvents.addEventListener(type, cb),
   };
 
