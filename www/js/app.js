@@ -9,6 +9,11 @@
   window.squadEngine = engine; // для отладки из DevTools
   const A = () => engine.audio; // активная дека
   const AUDIO_RE = /\.(mp3|flac|wav|ogg|oga|m4a|aac|opus|wma|webm|mp4)$/i;
+  const cap = window.Capacitor;
+  const isAndroid = !!(cap && cap.getPlatform && cap.getPlatform() === 'android');
+  // Нативный поиск музыки: в .exe — по дискам, на Android — через MediaStore (android-src/MusicScannerPlugin.java)
+  const scanner = isAndroid && cap.nativePromise ? (m, o) => cap.nativePromise('MusicScanner', m, o || {}) : null;
+  const canScan = !!((native && native.scanMusic) || scanner);
   const collator = new Intl.Collator('ru', { numeric: true, sensitivity: 'base' });
   const cmp = (a, b) => collator.compare(a || '', b || '');
 
@@ -49,7 +54,7 @@
   const DEFAULT_FX = JSON.parse(JSON.stringify(engine.state));
   const settings = Object.assign({
     theme: 'squad', accent: null, coverAccent: false, shuffle: false, repeat: 'off', eqPreset: 'flat',
-    tab: 'library', libTab: 'tracks', sort: 'added', crossfade: 0,
+    tab: 'library', libTab: 'tracks', sort: 'added', crossfade: 0, autoScan: true,
   }, store.get('settings', {}));
   engine.load(store.get('fx', {}));
 
@@ -111,8 +116,11 @@
 
   function makeTrack(name, extra) {
     const p = parseName(name);
-    const t = Object.assign({ name, title: p.title, artist: p.artist, album: '', albumArtist: '', genre: '', year: 0, no: 0, disc: 0 }, extra);
-    if (t.path) {
+    const t = { name, title: p.title, artist: p.artist, album: '', albumArtist: '', genre: '', year: 0, no: 0, disc: 0 };
+    for (const k in extra) if (extra[k] || extra[k] === 0 && !(k in t)) t[k] = extra[k];
+    if (t.uri) {
+      t.key = t.uri;
+    } else if (t.path) {
       t.key = t.path;
       const parts = t.path.split(/[\\/]/);
       t.folder = parts.slice(0, -1).join('/');
@@ -124,7 +132,7 @@
     return t;
   }
 
-  function addTracks(list) {
+  function addTracks(list, quiet) {
     let added = 0;
     for (const t of list) {
       if (byKey.has(t.key)) continue;
@@ -135,7 +143,7 @@
     if (qpos < 0 && tracks.length) { buildQueue(tracks.map((t) => t.key), 0); showMeta(); }
     renderLib();
     saveLibrary();
-    if (added) toast('Добавлено: ' + tracksWord(added));
+    if (added && !quiet) toast('Добавлено: ' + tracksWord(added));
     scanMeta();
     return added;
   }
@@ -150,9 +158,17 @@
     addTracks(paths.filter((p) => AUDIO_RE.test(p)).map((p) => makeTrack(p.split(/[\\/]/).pop(), { path: p })));
   }
 
-  function removeTrack(key) {
+  // Убранные вручную треки автопоиск больше не возвращает (до ручного «Найти музыку»)
+  const hideKeys = (keys) => {
+    const h = new Set(store.get('hidden', []));
+    keys.forEach((k) => h.add(k));
+    store.set('hidden', Array.from(h));
+  };
+
+  function removeTrack(key, gone) {
     const t = byKey.get(key);
     if (!t) return;
+    if (!gone && (t.path || t.uri)) hideKeys([key]);
     const wasCurrent = curTrack() === t;
     tracks = tracks.filter((x) => x !== t);
     byKey.delete(key);
@@ -193,12 +209,26 @@
     if (t === curTrack()) showMeta();
   }
 
+  // Обложка с Android (MediaStore) → байты JPEG
+  async function androidArt(t, size) {
+    const r = await scanner('artwork', { uri: t.uri, albumId: t.albumId || 0, size });
+    if (!r || !r.data) return null;
+    const bin = atob(r.data.split(',')[1]);
+    const data = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) data[i] = bin.charCodeAt(i);
+    return { mime: 'image/jpeg', data, url: r.data };
+  }
+
   async function loadMeta(t) {
     const cached = await metaDb.get(t.key);
     if (cached && cached.v === META_VER) { applyMeta(t, cached); return; }
     const m = { v: META_VER };
     try {
-      const src = await sourceOf(t);
+      if (t.uri && scanner) {
+        const ci = await SquadTags.coverInfo(await androidArt(t, 160));
+        if (ci) Object.assign(m, ci);
+      }
+      const src = t.uri ? null : await sourceOf(t);
       if (src) {
         const tags = await SquadTags.read(src);
         for (const k of ['title', 'artist', 'album', 'albumArtist', 'genre', 'year', 'no', 'disc']) if (tags[k]) m[k] = tags[k];
@@ -237,6 +267,11 @@
     if (coverUrl) { URL.revokeObjectURL(coverUrl); coverUrl = null; }
     if (!t.thumb) return;
     try {
+      if (t.uri && scanner) {
+        const art = await androidArt(t, 800);
+        if (coverFor === t.key && art) $('cover-img').src = art.url;
+        return;
+      }
       const src = await sourceOf(t);
       const tags = src ? await SquadTags.read(src) : {};
       if (coverFor !== t.key || !tags.picture) return;
@@ -303,7 +338,7 @@
   let renderT = null, lastRender = 0;
   function scheduleRender() {
     if (renderT) return;
-    const wait = Math.max(0, 500 - (Date.now() - lastRender));
+    const wait = Math.max(0, (tracks.length > 800 ? 2000 : 500) - (Date.now() - lastRender));
     renderT = setTimeout(() => { renderT = null; renderLib(); }, wait);
   }
 
@@ -685,6 +720,12 @@
 
   async function srcFor(t) {
     if (t.file) return URL.createObjectURL(t.file);
+    if (t.uri && cap && cap.convertFileSrc) {
+      // content:// отдаём через локальный сервер Capacitor целиком: blob нормально перематывается
+      const r = await fetch(cap.convertFileSrc(t.uri));
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return URL.createObjectURL(await r.blob());
+    }
     if (t.path && native) {
       const data = await native.readFile(t.path);
       return URL.createObjectURL(new Blob([data]));
@@ -728,7 +769,7 @@
     qpos = pos;
     showMeta();
     renderLib();
-    settings.lastPath = t.path || null;
+    settings.lastPath = t.path || t.uri || null;
     saveSettings();
     await engine.init().catch((e) => console.error(e));
     if (token !== playToken) return;
@@ -946,7 +987,9 @@
   $('file-input').onchange = (e) => { addFiles(e.target.files); e.target.value = ''; };
   $('folder-input').onchange = (e) => { addFiles(e.target.files); e.target.value = ''; };
   $('btn-clear').onclick = () => {
-    if (!tracks.length || !confirm('Очистить медиатеку? Плейлисты сохранятся.')) return;
+    if (!tracks.length || !confirm('Очистить медиатеку? Плейлисты сохранятся.' +
+      (canScan ? ' Чтобы вернуть найденные треки, нажмите «Найти музыку».' : ''))) return;
+    hideKeys(tracks.filter((t) => t.path || t.uri).map((t) => t.key));
     stopAll();
     tracks = []; byKey.clear(); queue = []; context = []; qpos = -1;
     renderLib(); saveLibrary(); showMeta();
@@ -1215,6 +1258,64 @@
   }
   requestAnimationFrame(draw);
 
+  // ---------- Автопоиск музыки на устройстве ----------
+  function restoreLast() {
+    if (A().src) return;
+    const last = tracks.findIndex((t) => t.key === settings.lastPath);
+    if (last >= 0) { buildQueue(tracks.map((t) => t.key), last); showMeta(); renderLib(); }
+  }
+
+  let scanBusy = false;
+  function setScanUI(state) {
+    $('btn-scan').disabled = state === 'busy';
+    $('btn-scan').textContent = state === 'busy' ? 'Ищу музыку…' : '⟳ Найти музыку';
+    $('empty-text').innerHTML = state === 'busy'
+      ? 'Ищу музыку на ' + (isAndroid ? 'телефоне' : 'компьютере') + '…'
+      : state === 'denied'
+        ? 'Разрешите доступ к музыке, чтобы плеер сам нашёл треки на телефоне.<br>Кнопка «Найти музыку» выше.'
+        : 'Добавьте музыку кнопками выше<br>или перетащите файлы в окно.';
+  }
+
+  async function scanDevice(manual) {
+    if (scanBusy || !canScan) return;
+    scanBusy = true;
+    setScanUI('busy');
+    let state = '';
+    try {
+      if (manual) store.set('hidden', []);
+      const hidden = new Set(store.get('hidden', []));
+      let found = [];
+      if (native) {
+        const paths = await native.scanMusic();
+        found = paths.map((p) => makeTrack(p.split(/[\\/]/).pop(), { path: p }));
+      } else {
+        let st = await scanner('checkAudio');
+        if (st.audio !== 'granted') st = await scanner('requestAudio');
+        if (st.audio !== 'granted') { state = 'denied'; if (manual) toast('Нет доступа к музыке'); return; }
+        const r = await scanner('scan');
+        const list = (r && r.tracks) || [];
+        const alive = new Set(list.map((x) => x.uri));
+        // треки, которых больше нет на телефоне
+        tracks.filter((t) => t.uri && !alive.has(t.uri)).forEach((t) => removeTrack(t.key, true));
+        found = list.map((x) => makeTrack(x.name || x.title || 'Трек', {
+          uri: x.uri, albumId: x.albumId, title: x.title, artist: x.artist, album: x.album, genre: x.genre,
+          year: x.year, no: x.no, disc: x.disc, folder: x.folder,
+        }));
+      }
+      const added = addTracks(found.filter((t) => !hidden.has(t.key)), true);
+      restoreLast();
+      if (manual || added) toast(added ? 'Найдено: ' + tracksWord(added) : 'Новых треков нет');
+    } catch (e) {
+      console.error(e);
+      if (manual) toast('Не удалось найти музыку');
+    } finally {
+      scanBusy = false;
+      setScanUI(state);
+    }
+  }
+  $('btn-scan').onclick = () => scanDevice(true);
+  $('auto-scan').onchange = (e) => { settings.autoScan = e.target.checked; saveSettings(); };
+
   // ---------- Старт ----------
   async function boot() {
     setTheme();
@@ -1228,16 +1329,18 @@
       const saved = store.get('library', []);
       if (saved.length) {
         const existing = await native.filterExisting(saved);
-        addTracks(existing.map((p) => makeTrack(p.split(/[\\/]/).pop(), { path: p })));
-        const last = tracks.findIndex((t) => t.path === settings.lastPath);
-        if (last >= 0) { buildQueue(tracks.map((t) => t.key), last); showMeta(); renderLib(); }
+        addTracks(existing.map((p) => makeTrack(p.split(/[\\/]/).pop(), { path: p })), true);
+        restoreLast();
       }
     } else {
-      const cap = window.Capacitor;
       // На Android выбор папки в WebView не работает — оставляем выбор файлов
-      if (cap && cap.getPlatform && cap.getPlatform() === 'android') $('btn-add-folder').classList.add('hidden');
+      if (isAndroid) $('btn-add-folder').classList.add('hidden');
       $('app-version').textContent = 'v' + (window.SQUAD_VERSION || '1.0.0');
     }
+    $('btn-scan').classList.toggle('hidden', !canScan);
+    $('auto-scan-row').classList.toggle('hidden', !canScan);
+    $('auto-scan').checked = settings.autoScan;
+    if (canScan && settings.autoScan) scanDevice(false);
     $('btn-check-update').onclick = () => window.squadCheckUpdates && window.squadCheckUpdates(true);
     renderLib();
     showMeta();

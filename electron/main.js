@@ -47,6 +47,64 @@ function walk(dir, out, depth = 0) {
   return out;
 }
 
+// ---------- Автопоиск музыки по компьютеру ----------
+// Папка пользователя целиком и остальные диски (D:, E:…), без системных и игровых папок.
+const SKIP_DIRS = new Set(['windows', 'program files', 'program files (x86)', 'programdata', 'appdata', '$recycle.bin',
+  'system volume information', 'recovery', 'perflogs', 'msocache', 'node_modules', 'steamapps', 'steamlibrary', 'steam',
+  'epic games', 'riot games', 'xboxgames', 'windowsapps', 'origin games', 'ubisoft game launcher', 'battle.net',
+  'cache', 'caches', 'temp', 'tmp', 'library', 'proc', 'sys', 'dev', 'snap', 'android', '.git']);
+const MIN_SIZE = 500 * 1024; // отсекаем звуки уведомлений и игр
+const MAX_FILES = 30000;
+
+async function scanRoots() {
+  const roots = new Set([app.getPath('home')]);
+  for (const k of ['music', 'downloads', 'desktop', 'documents']) {
+    try { roots.add(app.getPath(k)); } catch (_) {}
+  }
+  if (process.platform === 'win32') {
+    const sys = (process.env.SystemDrive || 'C:').toUpperCase();
+    for (const L of 'CDEFGHIJKLMNOPQRSTUVWXYZ') {
+      const d = L + ':\\';
+      if ((L + ':') === sys) continue; // системный диск — только папка пользователя
+      try { await fs.promises.access(d); roots.add(d); } catch (_) {}
+    }
+  }
+  return Array.from(roots);
+}
+
+async function scanMusic() {
+  const found = new Set();
+  const seenDirs = new Set();
+  const walkAsync = async (dir, depth) => {
+    if (depth > 12 || found.size >= MAX_FILES) return;
+    let real;
+    try { real = await fs.promises.realpath(dir); } catch (_) { return; }
+    if (seenDirs.has(real)) return;
+    seenDirs.add(real);
+    let entries;
+    try { entries = await fs.promises.readdir(dir, { withFileTypes: true }); } catch (_) { return; }
+    for (const e of entries) {
+      const name = e.name;
+      if (name[0] === '.' || name[0] === '$') continue;
+      const p = path.join(dir, name);
+      if (e.isDirectory()) {
+        if (!SKIP_DIRS.has(name.toLowerCase())) await walkAsync(p, depth + 1);
+      } else if (e.isFile() && AUDIO_RE.test(name) && !/\.(webm|mp4)$/i.test(name)) {
+        try { if ((await fs.promises.stat(p)).size >= MIN_SIZE) found.add(p); } catch (_) {}
+        if (found.size >= MAX_FILES) return;
+      }
+    }
+  };
+  for (const r of await scanRoots()) await walkAsync(r, 0);
+  return Array.from(found).sort((a, b) => a.localeCompare(b, 'ru'));
+}
+
+let scanning = null;
+ipcMain.handle('scan-music', () => {
+  if (!scanning) scanning = scanMusic().finally(() => { scanning = null; });
+  return scanning;
+});
+
 ipcMain.handle('pick-files', async (e) => {
   const r = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender), {
     title: 'Добавить треки',
