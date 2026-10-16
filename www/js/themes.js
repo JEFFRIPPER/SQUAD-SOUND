@@ -71,11 +71,17 @@
     },
   ];
 
-  window.applyTheme = function (id, customAccent) {
+  const lum = (hex) => {
+    const n = parseInt(String(hex).slice(1), 16);
+    return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
+  };
+
+  // customAccent2 — второй цвет градиента (для акцента из обложки)
+  window.applyTheme = function (id, customAccent, customAccent2) {
     const t = window.SQUAD_THEMES.find((x) => x.id === id) || window.SQUAD_THEMES[0];
     const root = document.documentElement;
     const v = Object.assign({}, t.vars);
-    if (customAccent) { v.accent = customAccent; v.accent2 = customAccent; }
+    if (customAccent) { v.accent = customAccent; v.accent2 = customAccent2 || customAccent; v.onAccent = lum(customAccent) > 0.55 ? '#111111' : '#ffffff'; }
     root.dataset.theme = t.id;
     root.style.setProperty('--bg', v.bg);
     root.style.setProperty('--bg2', v.bg2);

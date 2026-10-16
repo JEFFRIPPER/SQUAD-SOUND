@@ -31,8 +31,18 @@
           <button class="btn primary" id="btn-add-files">＋ Файлы</button>
           <button class="btn" id="btn-add-folder">＋ Папка</button>
           <input class="search" id="search" type="search" placeholder="Поиск по трекам">
-          <button class="btn ghost" id="btn-clear" title="Очистить список">Очистить</button>
+          <button class="btn ghost" id="btn-clear" title="Очистить медиатеку">Очистить</button>
         </div>
+        <nav class="lib-tabs" id="lib-tabs">
+          <button class="chip" data-lib="tracks">Треки</button>
+          <button class="chip" data-lib="artists">Исполнители</button>
+          <button class="chip" data-lib="albums">Альбомы</button>
+          <button class="chip" data-lib="genres">Жанры</button>
+          <button class="chip" data-lib="folders">Папки</button>
+          <button class="chip" data-lib="playlists">Плейлисты</button>
+          <button class="chip" data-lib="queue">Очередь</button>
+        </nav>
+        <div class="lib-head" id="lib-head"></div>
         <input type="file" id="file-input" accept="audio/*,.mp3,.flac,.wav,.ogg,.m4a,.aac,.opus,.wma" multiple hidden>
         <input type="file" id="folder-input" webkitdirectory multiple hidden>
         <div class="empty" id="empty">
@@ -106,6 +116,13 @@
         </div>
 
         <div class="card">
+          <h3>Переходы между треками</h3>
+          <div class="ctrl"><label>Кроссфейд <b id="crossfade-val"></b></label>
+            <input type="range" id="crossfade" min="0" max="12" step="1"></div>
+          <p class="hint">Когда кроссфейд выключен, следующий трек загружается заранее и включается без паузы.</p>
+        </div>
+
+        <div class="card">
           <h3>Таймер сна</h3>
           <div class="chips" id="sleep-chips">
             <button data-min="0" class="chip">Выкл</button>
@@ -130,6 +147,8 @@
             <input type="color" id="accent-color">
             <button class="btn ghost" id="accent-reset">Как в теме</button>
           </div>
+          <label class="switch"><input type="checkbox" id="cover-accent"><span></span>Цвет из обложки трека</label>
+          <p class="hint">Акцент подстраивается под обложку, которая сейчас играет. Если у трека нет обложки, остаётся цвет темы.</p>
         </div>
         <div class="card about">
           <h3>О приложении</h3>
@@ -142,7 +161,7 @@
       <!-- ===== Сейчас играет ===== -->
       <aside class="now" id="panel-player">
         <div class="cover" id="cover">
-          <img src="img/squad-logo.jpg" alt="" class="cover-img">
+          <img src="img/squad-logo.jpg" alt="" class="cover-img" id="cover-img">
           <canvas id="viz"></canvas>
           <div class="cover-letter" id="cover-letter">S</div>
         </div>
@@ -172,6 +191,10 @@
           <svg viewBox="0 0 24 24"><path d="M11 5 6 9H2v6h4l5 4V5zM15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/></svg>
           <input type="range" id="volume" min="0" max="1" step="0.01">
         </div>
+        <div class="np-actions">
+          <button class="chip" id="np-queue">Очередь</button>
+          <button class="chip" id="np-playlist">＋ В плейлист</button>
+        </div>
         <div class="quick" id="quick">
           <span id="q-speed"></span><span id="q-pitch"></span><span id="q-fx"></span>
         </div>
@@ -181,6 +204,7 @@
     <!-- мини-плеер для телефона -->
     <div class="mini" id="mini">
       <div class="mini-progress" id="mini-progress"></div>
+      <img class="mini-art" id="mini-art" alt="">
       <div class="mini-meta"><div class="title" id="mini-title">—</div><div class="artist" id="mini-artist"></div></div>
       <button class="icon-btn" id="mini-play">
         <svg viewBox="0 0 24 24" class="ic-play"><path d="M7 4v16l13-8z"/></svg>
@@ -192,13 +216,26 @@
       <button class="btn primary hidden" id="update-btn"></button>
       <button class="icon-btn" id="update-close" title="Закрыть">✕</button>
     </div>
+    <div class="menu" id="menu"></div>
+    <div class="dialog-wrap" id="dialog">
+      <div class="dialog">
+        <h3 id="dialog-title"></h3>
+        <input class="search" id="dialog-input" type="text" maxlength="80">
+        <div class="row">
+          <button class="btn ghost" id="dialog-cancel">Отмена</button>
+          <button class="btn primary" id="dialog-ok">OK</button>
+        </div>
+      </div>
+    </div>
     <div class="drop" id="drop">Отпустите, чтобы добавить</div>
     <div class="toast" id="toast"></div>
   </div>
 
   <audio id="audio" preload="auto"></audio>
+  <audio id="audio2" preload="auto"></audio>
   <script src="js/version.js"></script>
   <script src="js/audio-engine.js"></script>
+  <script src="js/tags.js"></script>
   <script src="js/themes.js"></script>
   <script src="js/app.js"></script>
   <script src="js/updater.js"></script>

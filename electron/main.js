@@ -70,6 +70,22 @@ ipcMain.handle('read-file', async (_e, p) => {
   return fs.promises.readFile(p);
 });
 
+// Кусок файла — для чтения тегов без загрузки всего трека
+ipcMain.handle('read-range', async (_e, p, start, length) => {
+  if (!AUDIO_RE.test(p)) throw new Error('Not an audio file');
+  const fh = await fs.promises.open(p, 'r');
+  try {
+    const { size } = await fh.stat();
+    const s = Math.max(0, Math.min(start | 0, size));
+    const len = Math.max(0, Math.min(length | 0, size - s));
+    const buf = Buffer.alloc(len);
+    if (len) await fh.read(buf, 0, len, s);
+    return { size, data: buf };
+  } finally {
+    await fh.close();
+  }
+});
+
 ipcMain.handle('filter-existing', async (_e, paths) =>
   (Array.isArray(paths) ? paths : []).filter((p) => typeof p === 'string' && fs.existsSync(p)));
 

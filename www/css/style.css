@@ -61,8 +61,45 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .t-title, .t-artist { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .t-title { font-weight: 600; }
 .t-artist { color: var(--muted); font-size: 13px; }
-.t-del { opacity: 0; background: none; border: 0; color: var(--muted); font-size: 18px; padding: 4px 8px; }
-.track:hover .t-del { opacity: 1; }
+.t-art { overflow: hidden; }
+.t-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.t-more, .t-handle { background: none; border: 0; color: var(--muted); font-size: 18px; line-height: 1; padding: 8px 8px; border-radius: 8px; flex-shrink: 0; }
+.t-more:hover { color: var(--text); background: var(--line); }
+.t-handle { cursor: grab; touch-action: none; user-select: none; font-size: 20px; }
+.track.dragging { background: var(--card); box-shadow: 0 8px 24px rgba(0,0,0,.45); position: relative; z-index: 3; }
+.track.done { opacity: .5; }
+.chev { color: var(--muted); font-size: 22px; padding: 0 6px; }
+.tracklist .hint.pad { padding: 30px 10px; text-align: center; list-style: none; }
+.lib-tabs { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin-bottom: 12px; }
+.lib-tabs::-webkit-scrollbar { display: none; }
+.lib-tabs .chip { white-space: nowrap; padding: 6px 13px; font-size: 14px; }
+.lib-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; min-height: 38px; flex-wrap: wrap; }
+.lib-head:empty { display: none; }
+.lib-head .lh-title { flex: 1; min-width: 120px; font-weight: 700; font-size: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lib-head .lh-sub { color: var(--muted); font-size: 13px; font-weight: 400; }
+.lib-head .btn { padding: 7px 14px; }
+.lib-head .icon-btn { font-size: 28px; width: 38px; height: 38px; }
+.np-actions { display: flex; gap: 8px; justify-content: center; }
+.np-actions .chip { font-size: 13px; padding: 6px 12px; }
+.cover.has-art .cover-img { display: block; }
+.cover.has-art .cover-letter { display: none; }
+.mini-art { display: none; }
+
+/* ---------- Меню и диалог ---------- */
+.menu { position: fixed; z-index: 80; min-width: 230px; max-width: calc(100vw - 16px); max-height: 70vh; overflow-y: auto;
+  background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 6px; box-shadow: 0 16px 40px rgba(0,0,0,.55); display: none; }
+.menu.show { display: block; }
+.menu button { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 10px 12px; border-radius: 10px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.menu button:hover { background: var(--line); }
+.menu button.danger { color: var(--accent); }
+.menu .m-title { padding: 8px 12px 6px; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; }
+.dialog-wrap { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,.6); display: none; place-items: center; padding: 16px; }
+.dialog-wrap.show { display: grid; }
+.dialog { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; width: min(380px, 100%); }
+.dialog h3 { margin: 0 0 12px; }
+.dialog .search { width: 100%; margin-bottom: 14px; }
+.dialog .row { justify-content: flex-end; }
 .eqbars { display: none; gap: 2px; align-items: flex-end; height: 16px; }
 .track.playing .eqbars { display: flex; }
 .eqbars i { width: 3px; background: var(--accent); animation: bar 0.9s ease-in-out infinite; }
@@ -159,7 +196,8 @@ input[type=color] { width: 48px; height: 36px; border: 0; background: none; padd
   background: color-mix(in srgb, var(--bg) 80%, transparent); border: 3px dashed var(--accent); z-index: 50; }
 .drop.show { display: grid; }
 .toast { position: fixed; left: 50%; bottom: 30px; transform: translateX(-50%) translateY(20px); opacity: 0; transition: .25s;
-  background: var(--card); border: 1px solid var(--line); padding: 10px 18px; border-radius: 999px; z-index: 60; pointer-events: none; }
+  background: var(--card); border: 1px solid var(--line); padding: 10px 18px; border-radius: 999px; z-index: 60; pointer-events: none;
+  white-space: nowrap; max-width: calc(100vw - 24px); overflow: hidden; text-overflow: ellipsis; }
 .toast.show { opacity: 1; transform: translateX(-50%); }
 
 /* ---------- Телефон ---------- */
@@ -172,7 +210,8 @@ input[type=color] { width: 48px; height: 36px; border: 0; background: none; padd
   .now { border-left: 0; padding: 14px 22px calc(24px + var(--safe-bottom)); }
   .now.hidden-mobile { display: none; }
   .cover { max-width: 360px; width: 100%; margin: 0 auto; }
-  .t-del { opacity: 1; }
+  .menu { left: 8px !important; right: 8px; top: auto !important; bottom: calc(8px + var(--safe-bottom)); min-width: 0; }
+  .mini.has-art .mini-art { display: block; width: 40px; height: 40px; border-radius: 10px; object-fit: cover; flex-shrink: 0; margin-left: -6px; }
   .mini { display: flex; align-items: center; gap: 8px; position: fixed; left: 8px; right: 8px; bottom: calc(8px + var(--safe-bottom));
     background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 8px 8px 8px 14px; overflow: hidden; z-index: 20; }
   .mini.hide { display: none; }
@@ -209,11 +248,11 @@ input[type=color] { width: 48px; height: 36px; border: 0; background: none; padd
 [data-theme="squad"] .tab.active,
 [data-theme="squad"] .btn.primary,
 [data-theme="squad"] .chip.on,
-[data-theme="squad"] .play-btn { box-shadow: 0 0 20px rgba(255, 30, 60, 0.55); }
-[data-theme="squad"] .cover { background: #000; box-shadow: 0 0 40px rgba(255, 30, 60, 0.45); }
+[data-theme="squad"] .play-btn { box-shadow: 0 0 20px color-mix(in srgb, var(--accent) 55%, transparent); }
+[data-theme="squad"] .cover { background: #000; box-shadow: 0 0 40px color-mix(in srgb, var(--accent) 45%, transparent); }
 [data-theme="squad"] .cover-img { display: block; }
 [data-theme="squad"] .cover-letter { display: none; }
-[data-theme="squad"] input[type=range]::-webkit-slider-thumb { box-shadow: 0 0 10px rgba(255, 30, 60, 0.7); }
+[data-theme="squad"] input[type=range]::-webkit-slider-thumb { box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 70%, transparent); }
 [data-theme="squad"] .track.playing { background: rgba(61, 9, 17, 0.7); }
 [data-theme="squad"] .brand-name b { text-shadow: none; }
 [data-theme="squad"] .brand-name { text-shadow: 0 0 18px rgba(255, 30, 60, 0.45); }
