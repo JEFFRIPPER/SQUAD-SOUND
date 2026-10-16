@@ -25,4 +25,8 @@ NODE_PATH="$TMP/node_modules" npx esbuild "$ROOT/scripts/telegram-entry.js" --bu
 # после обновления в кэше не было users.getSavedMusic. Ключ со своей меткой — при смене схемы меняем метку.
 sed -i 's/"GramJs:apiCache"/"GramJs:apiCache:squad-198-music"/' "$ROOT/www/js/vendor/telegram.min.js"
 grep -q 'GramJs:apiCache:squad-198-music' "$ROOT/www/js/vendor/telegram.min.js"
+# GramJS на каждый неизвестный тип (новые обновления сервера) вызывает alert(): окно блокирует JS
+# и всплывает без конца. Ошибку библиотека и так обрабатывает (пропускает пакет), alert убираем.
+sed -i 's/typeof alert<"u"&&alert(`Missing MTProto Entity/false\&\&alert(`Missing MTProto Entity/' "$ROOT/www/js/vendor/telegram.min.js"
+grep -q 'false&&alert(`Missing MTProto Entity' "$ROOT/www/js/vendor/telegram.min.js"
 rm -rf "$TMP"
