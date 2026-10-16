@@ -30,6 +30,7 @@
         <div class="lib-actions">
           <button class="btn primary" id="btn-add-files">＋ Файлы</button>
           <button class="btn" id="btn-add-folder">＋ Папка</button>
+          <button class="btn hidden" id="btn-scan">⟳ Найти музыку</button>
           <input class="search" id="search" type="search" placeholder="Поиск по трекам">
           <button class="btn ghost" id="btn-clear" title="Очистить медиатеку">Очистить</button>
         </div>
@@ -47,7 +48,7 @@
         <input type="file" id="folder-input" webkitdirectory multiple hidden>
         <div class="empty" id="empty">
           <div class="empty-icon">♫</div>
-          <p>Добавьте музыку кнопками выше<br>или перетащите файлы в окно.</p>
+          <p id="empty-text">Добавьте музыку кнопками выше<br>или перетащите файлы в окно.</p>
         </div>
         <ol class="tracklist" id="tracklist"></ol>
       </section>
@@ -153,6 +154,7 @@
         <div class="card about">
           <h3>О приложении</h3>
           <p><b>SQUAD SOUND</b> <span id="app-version"></span></p>
+          <label class="switch hidden" id="auto-scan-row"><input type="checkbox" id="auto-scan"><span></span>Искать музыку на устройстве при запуске</label>
           <button class="btn" id="btn-check-update">Проверить обновления</button>
           <p class="hint">Пробел — пауза, ←/→ — перемотка, Ctrl+←/→ — трек назад/вперёд.</p>
         </div>

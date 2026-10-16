@@ -22,4 +22,22 @@ g = g.replace(/versionCode \d+/, 'versionCode ' + (process.env.VERSION_CODE || c
      .replace(/versionName "[^"]*"/, 'versionName "' + pkg.version + '"');
 fs.writeFileSync(gradle, g);
 
+// Нативный поиск музыки (MediaStore): плагин, MainActivity и разрешения
+const javaDir = path.join(root, 'android', 'app', 'src', 'main', 'java', 'com', 'squad', 'sound');
+fs.mkdirSync(javaDir, { recursive: true });
+for (const f of ['MusicScannerPlugin.java', 'MainActivity.java']) {
+  fs.copyFileSync(path.join(root, 'android-src', f), path.join(javaDir, f));
+}
+const manifest = path.join(root, 'android', 'app', 'src', 'main', 'AndroidManifest.xml');
+let m = fs.readFileSync(manifest, 'utf8');
+const perms = [
+  '<uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />',
+  '<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />',
+];
+for (const p of perms) {
+  const name = p.match(/name="([^"]+)"/)[1];
+  if (!m.includes('"' + name + '"')) m = m.replace('</manifest>', '    ' + p + '\n</manifest>');
+}
+fs.writeFileSync(manifest, m);
+
 run('npx cap sync android');
