@@ -35,6 +35,12 @@ public class SquadMediaPlugin extends Plugin {
         self = this;
     }
 
+    // Жив ли плеер в WebView (после выгрузки процесса — нет)
+    static boolean alive() {
+        SquadMediaPlugin p = self;
+        return p != null && p.bridge != null && p.getActivity() != null && !p.getActivity().isFinishing();
+    }
+
     // Нажатие в уведомлении/на наушниках → window «squadMedia» {action, pos}
     static void emit(String action, double pos) {
         SquadMediaPlugin p = self;
