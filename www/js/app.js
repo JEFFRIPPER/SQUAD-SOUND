@@ -1714,6 +1714,8 @@
     playing: () => !A().paused,
     time: () => ({ cur: A().currentTime || 0, dur: A().duration || 0 }),
     seek: (s) => { if (A().src) A().currentTime = s; },
+    rate: () => A().playbackRate || 1,
+    pause: () => decks.forEach((d) => d.pause()),
     // включить список ключей с позиции i; shuffle — перемешать
     play(keys, i, shuffle) {
       if (!keys.length) return;

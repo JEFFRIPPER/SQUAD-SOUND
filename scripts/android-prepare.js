@@ -25,7 +25,7 @@ fs.writeFileSync(gradle, g);
 // Нативные плагины (поиск музыки, обновление APK), MainActivity и разрешения
 const javaDir = path.join(root, 'android', 'app', 'src', 'main', 'java', 'com', 'squad', 'sound');
 fs.mkdirSync(javaDir, { recursive: true });
-for (const f of ['MusicScannerPlugin.java', 'SquadUpdaterPlugin.java', 'MainActivity.java']) {
+for (const f of ['MusicScannerPlugin.java', 'SquadUpdaterPlugin.java', 'SquadMediaPlugin.java', 'SquadMediaService.java', 'MainActivity.java']) {
   fs.copyFileSync(path.join(root, 'android-src', f), path.join(javaDir, f));
 }
 const manifest = path.join(root, 'android', 'app', 'src', 'main', 'AndroidManifest.xml');
@@ -37,11 +37,18 @@ const perms = [
   '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />',
   // обновление APK изнутри приложения
   '<uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />',
+  // фоновое воспроизведение: служба с уведомлением, экран блокировки, наушники
+  '<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />',
+  '<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />',
+  '<uses-permission android:name="android.permission.WAKE_LOCK" />',
+  '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />',
 ];
 for (const p of perms) {
   const name = p.match(/name="([^"]+)"/)[1];
   if (!m.includes('"' + name + '"')) m = m.replace('</manifest>', '    ' + p + '\n</manifest>');
 }
+const service = '<service android:name=".SquadMediaService" android:exported="false" android:foregroundServiceType="mediaPlayback" />';
+if (!m.includes('.SquadMediaService')) m = m.replace('</application>', '    ' + service + '\n    </application>');
 fs.writeFileSync(manifest, m);
 
 run('npx cap sync android');
