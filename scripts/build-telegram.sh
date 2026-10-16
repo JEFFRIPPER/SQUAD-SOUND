@@ -13,10 +13,12 @@ const f = "node_modules/telegram/tl/apiTl.js";
 let s = require("fs").readFileSync(f, "utf8");
 if (!s.includes("users.getSavedMusic")) {
   s = s.replace("---functions---", "users.savedMusicNotModified#e3878aa4 count:int = users.SavedMusic;\nusers.savedMusic#34a2f297 count:int documents:Vector<Document> = users.SavedMusic;\n---functions---");
-  s = s.replace(/`;\s*$/, "users.getSavedMusic#788d7fe3 id:InputUser offset:int limit:int hash:long = users.SavedMusic;\n`;\n");
+  // метод — сразу после ---functions--- (конец файла у разных версий разный, регэксп по нему промахивался)
+  s = s.replace("---functions---\n", "---functions---\nusers.getSavedMusic#788d7fe3 id:InputUser offset:int limit:int hash:long = users.SavedMusic;\n");
   require("fs").writeFileSync(f, s);
 }'
 grep -q "users.getSavedMusic#788d7fe3" node_modules/telegram/tl/apiTl.js
+grep -q "users.savedMusic#34a2f297" node_modules/telegram/tl/apiTl.js
 NODE_PATH="$TMP/node_modules" npx esbuild "$ROOT/scripts/telegram-entry.js" --bundle --minify --platform=browser --format=iife --target=es2020 \
   --legal-comments=eof --define:process.env.NODE_ENV='"production"' --outfile="$ROOT/www/js/vendor/telegram.min.js"
 rm -rf "$TMP"
