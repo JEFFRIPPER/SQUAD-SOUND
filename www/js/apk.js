@@ -577,30 +577,110 @@
     }
     return out.sort((a, b) => a.t - b.t);
   }
-  async function fetchLyrics(t) {
-    if (lyrCache.has(t.key)) return lyrCache.get(t.key);
-    const saved = ls.get('lyr:' + t.key, null);
-    if (saved) { lyrCache.set(t.key, saved); return saved; }
-    if (!window.SquadOnline || !window.SquadOnline.json) throw new Error('Нет сети');
-    const artist = t.artist && t.artist !== 'Неизвестный исполнитель' ? t.artist : '';
-    const title = String(t.title || '').replace(/\s*[([](?:official|lyric|audio|video|hd|hq|clip|клип)[^)\]]*[)\]]/ig, '').trim();
-    const url = 'https://lrclib.net/api/search?' + (artist ? 'track_name=' + encodeURIComponent(title) + '&artist_name=' + encodeURIComponent(artist) : 'q=' + encodeURIComponent(title));
-    let list = await window.SquadOnline.json(url);
-    if ((!Array.isArray(list) || !list.length) && artist) list = await window.SquadOnline.json('https://lrclib.net/api/search?q=' + encodeURIComponent(artist + ' ' + title));
-    list = Array.isArray(list) ? list : [];
-    const d = S.time().dur || t.duration || 0;
-    const score = (x) => (x.syncedLyrics ? 0 : 30) + (d && x.duration ? Math.abs(x.duration - d) : 15) + (x.instrumental ? 100 : 0);
-    const best = list.filter((x) => x && (x.syncedLyrics || x.plainLyrics || x.instrumental)).sort((a, b) => score(a) - score(b))[0];
-    const res = best ? { synced: best.syncedLyrics || '', plain: best.plainLyrics || '', instrumental: !!best.instrumental } : { none: true };
-    lyrCache.set(t.key, res);
-    if (!res.none) ls.set('lyr:' + t.key, res);
-    return res;
+  // Источники по очереди: кэш → теги файла → LRCLIB (точное совпадение, потом поиск) → lyrics.ovh.
+  // Кэш — IndexedDB (в localStorage тексты всей медиатеки не помещаются). Пустой результат помним 14 дней.
+  const LYR_NONE_TTL = 14 * 864e5;
+  const cleanTitle = (x) => String(x || '').replace(/\s*[([](?:official|lyric|lyrics|audio|video|hd|hq|clip|клип|prod\.?[^)\]]*|feat\.?[^)\]]*|ft\.?[^)\]]*)[^)\]]*[)\]]/ig, '').replace(/\s+-\s+(?:remaster(?:ed)?|live).*$/i, '').trim();
+  const realArtist = (t) => (t.artist && t.artist !== 'Неизвестный исполнитель' ? t.artist : '');
+  async function lyrSaved(key) {
+    if (lyrCache.has(key)) return lyrCache.get(key);
+    let r = await idb.get('lyr:' + key).catch(() => null);
+    if (!r) { // перенос старого кэша из localStorage
+      const old = ls.get('lyr:' + key, null);
+      if (old) { r = old; idb.set('lyr:' + key, old).catch(() => {}); try { localStorage.removeItem(LS + 'lyr:' + key); } catch (_) {} }
+    }
+    if (r && r.none && Date.now() - (r.at || 0) > LYR_NONE_TTL) r = null;
+    if (r) lyrCache.set(key, r);
+    return r || null;
   }
+  function lyrStore(key, r) {
+    lyrCache.set(key, r);
+    idb.set('lyr:' + key, r).catch(() => {});
+  }
+  // «не найдено» (404) — нормальный ответ; прочие ошибки считаем, чтобы не запомнить «нет текста» из-за сбоя сети
+  const J = (url, net) => window.SquadOnline.json(url).catch((e) => { if (!/HTTP 4\d\d/.test(String(e && e.message))) net.fail++; return null; });
+  async function fromLrclib(t, d, net) {
+    const artist = realArtist(t), title = cleanTitle(t.title);
+    if (!title) return null;
+    const pick = (list) => {
+      list = (Array.isArray(list) ? list : [list]).filter((x) => x && (x.syncedLyrics || x.plainLyrics || x.instrumental));
+      const score = (x) => (x.syncedLyrics ? 0 : 30) + (d && x.duration ? Math.abs(x.duration - d) : 15) + (x.instrumental ? 100 : 0);
+      const best = list.sort((a, b) => score(a) - score(b))[0];
+      return best ? { synced: best.syncedLyrics || '', plain: best.plainLyrics || '', instrumental: !!best.instrumental, src: 'LRCLIB' } : null;
+    };
+    let r = null;
+    if (artist && d) r = pick(await J('https://lrclib.net/api/get?artist_name=' + encodeURIComponent(artist) + '&track_name=' + encodeURIComponent(title) + '&duration=' + Math.round(d), net));
+    if (!r && artist) r = pick(await J('https://lrclib.net/api/search?track_name=' + encodeURIComponent(title) + '&artist_name=' + encodeURIComponent(artist), net));
+    if (!r) r = pick(await J('https://lrclib.net/api/search?q=' + encodeURIComponent((artist + ' ' + title).trim()), net));
+    return r;
+  }
+  async function fromOvh(t, net) {
+    const artist = realArtist(t), title = cleanTitle(t.title);
+    if (!artist || !title) return null;
+    const j = await J('https://api.lyrics.ovh/v1/' + encodeURIComponent(artist) + '/' + encodeURIComponent(title), net);
+    const v = j && typeof j.lyrics === 'string' ? j.lyrics.replace(/\r/g, '').replace(/^Paroles de la chanson[^\n]*\n/i, '').trim() : '';
+    return v ? { synced: '', plain: v, src: 'lyrics.ovh' } : null;
+  }
+  // heavy — можно читать файл Android целиком (открыт текст текущего трека); online — разрешены сетевые базы
+  async function fetchLyrics(t, opts) {
+    const o = Object.assign({ heavy: true, online: true }, opts);
+    const saved = await lyrSaved(t.key);
+    if (saved) return saved;
+    let r = null;
+    try { const e = await S.embeddedLyrics(t, o.heavy); if (e) r = Object.assign(e, { src: 'теги файла' }); } catch (_) {}
+    if (!r && o.online) {
+      if (!window.SquadOnline || !window.SquadOnline.json) throw new Error('Нет сети');
+      if (!navigator.onLine) throw new Error('Нет сети');
+      const d = (S.cur() === t ? S.time().dur : 0) || t.duration || 0;
+      const net = { fail: 0 };
+      r = await fromLrclib(t, d, net) || await fromOvh(t, net);
+      if (!r && net.fail) throw new Error('Нет сети');
+    }
+    if (!r && !o.online) return null;
+    r = r || { none: true, at: Date.now() };
+    lyrStore(t.key, r);
+    return r;
+  }
+
+  // Фоновая загрузка текстов для всей медиатеки (по одному запросу, без спешки)
+  const lyrAuto = { on: ls.get('lyrAuto', true), run: false, done: 0, total: 0, found: 0 };
+  async function lyricsPrefetch(force) {
+    if (lyrAuto.run || (!lyrAuto.on && !force)) return;
+    lyrAuto.run = true;
+    try {
+      const keys = new Set((await idb.keys().catch(() => [])).map(String));
+      const todo = S.tracks.filter((t) => t.title && !keys.has('lyr:' + t.key));
+      Object.assign(lyrAuto, { done: 0, total: todo.length, found: 0 });
+      lyrUI();
+      for (const t of todo) {
+        if (!lyrAuto.on && !force) break;
+        if (!navigator.onLine) { await new Promise((r) => setTimeout(r, 30000)); if (!navigator.onLine) break; }
+        try { const r = await fetchLyrics(t, { heavy: false }); if (r && !r.none) lyrAuto.found++; } catch (_) {}
+        lyrAuto.done++;
+        if (lyrAuto.done % 5 === 0 || lyrAuto.done === lyrAuto.total) lyrUI();
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    } finally {
+      lyrAuto.run = false;
+      lyrUI();
+    }
+  }
+  let lyrT = 0;
+  const lyrSoon = () => { clearTimeout(lyrT); lyrT = setTimeout(() => lyricsPrefetch(false), 15000); };
+  S.on('library', lyrSoon);
+  window.addEventListener('online', lyrSoon);
+  let lyrUI = () => {};
+
   let lyrBody = null;
   function openLyrics() {
     lyr.open = true;
     lyrBody = openSheet('Текст', '<div class="lyr"></div>', 'tall lyr-sheet', () => { lyr.open = false; cancelAnimationFrame(lyr.raf); });
     lyrBody.addEventListener('click', (e) => {
+      if (e.target.closest('[data-lyr="retry"]')) {
+        const t = S.cur();
+        if (t) { lyrCache.delete(t.key); idb.del('lyr:' + t.key).catch(() => {}); loadLyrics(); }
+        return;
+      }
       const l = e.target.closest('[data-t]');
       if (l) S.seek(+l.dataset.t);
     });
@@ -618,7 +698,7 @@
     try {
       const r = await fetchLyrics(t);
       if (lyr.key !== t.key || !lyr.open) return;
-      if (r.none) { box.innerHTML = '<p class="hint">Текст для этого трека не нашёлся.</p>'; return; }
+      if (r.none) { box.innerHTML = '<p class="hint">Текст для этого трека не нашёлся ни в файле, ни в LRCLIB, ни в lyrics.ovh.</p><button class="chip" data-lyr="retry">Искать снова</button>'; return; }
       if (r.instrumental && !r.synced && !r.plain) { box.innerHTML = '<p class="hint">Это инструментальный трек.</p>'; return; }
       const lines = parseLrc(r.synced);
       if (lines.length) {
@@ -628,6 +708,7 @@
       } else {
         box.innerHTML = '<div class="lyr-plain">' + esc(r.plain).replace(/\n/g, '<br>') + '</div>';
       }
+      if (r.src) box.insertAdjacentHTML('beforeend', '<p class="lyr-src">Текст: ' + esc(r.src) + '</p>');
     } catch (e) {
       if (lyr.key === t.key) box.innerHTML = '<p class="hint">Не удалось загрузить текст. Проверьте интернет.</p>';
     }
@@ -685,7 +766,8 @@
       t.oncomplete = () => res(r.result);
       t.onerror = () => rej(t.error);
     }));
-    return { get: (k) => tx('readonly', (st) => st.get(k)), set: (k, v) => tx('readwrite', (st) => st.put(v, k)), del: (k) => tx('readwrite', (st) => st.delete(k)) };
+    return { get: (k) => tx('readonly', (st) => st.get(k)), set: (k, v) => tx('readwrite', (st) => st.put(v, k)), del: (k) => tx('readwrite', (st) => st.delete(k)),
+      keys: () => tx('readonly', (st) => st.getAllKeys()) };
   })();
   const MAX_IMG = 30 * 1024 * 1024;
   function pickImage() {
@@ -1220,6 +1302,22 @@
     saveFile('squad-sound-' + today() + '.json', { type: 'backup', data });
   });
   $('bk-load').addEventListener('click', importFile);
+
+  // Тексты песен: фоновая загрузка для всей медиатеки
+  const ycard = document.createElement('div');
+  ycard.className = 'card';
+  kcard.before(ycard);
+  lyrUI = () => {
+    ycard.innerHTML = '<h3>Тексты песен</h3><p class="hint">Ищем в тегах файла, в LRCLIB (с синхронизацией по строкам) и в lyrics.ovh. ' +
+      'Найденные тексты сохраняются на телефоне и открываются без интернета.</p>' +
+      '<label class="switch"><input type="checkbox" id="lyr-auto"' + (lyrAuto.on ? ' checked' : '') + '><span></span>Скачивать тексты для всей медиатеки сами</label>' +
+      (lyrAuto.run ? '<p class="hint">Скачиваю: ' + lyrAuto.done + ' из ' + lyrAuto.total + ', найдено ' + lyrAuto.found + '</p>'
+        : lyrAuto.total ? '<p class="hint">Готово: проверено ' + lyrAuto.done + ', найдено ' + lyrAuto.found + '</p>' : '') +
+      '<div class="chips"><button class="chip" id="lyr-now"' + (lyrAuto.run ? ' disabled' : '') + '>Скачать сейчас</button></div>';
+  };
+  lyrUI();
+  ycard.addEventListener('change', (e) => { if (e.target.id === 'lyr-auto') { lyrAuto.on = e.target.checked; ls.set('lyrAuto', lyrAuto.on); if (lyrAuto.on) lyricsPrefetch(false); } });
+  ycard.addEventListener('click', (e) => { if (e.target.id === 'lyr-now') lyricsPrefetch(true); });
 
   // ---------- Кнопка «Назад» Android ----------
   function back() {

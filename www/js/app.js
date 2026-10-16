@@ -1770,6 +1770,20 @@
     rate: () => A().playbackRate || 1,
     item: (i) => items[i] || null,
     sound: () => JSON.parse(JSON.stringify(engine.state)),
+    // Текст песни из тегов файла. heavy — разрешить читать файл Android целиком (только для одного трека)
+    async embeddedLyrics(t, heavy) {
+      let src = null;
+      if (t.web && !heavy) return null;
+      if (t.uri) {
+        if (!heavy || !cap || !cap.convertFileSrc) return null;
+        const r = await fetch(cap.convertFileSrc(t.uri));
+        if (!r.ok) return null;
+        src = SquadTags.fromBlob(await r.blob());
+      } else src = await sourceOf(t);
+      if (!src) return null;
+      const tags = await SquadTags.read(src);
+      return tags.syncedLyrics || tags.lyrics ? { synced: tags.syncedLyrics || '', plain: tags.lyrics || '' } : null;
+    },
     setSound(st) {
       const v = Object.assign({}, st);
       delete v.volume; // громкость пресетом не трогаем
