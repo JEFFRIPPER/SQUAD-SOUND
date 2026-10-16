@@ -103,6 +103,7 @@ registerProcessor('squad-pitch', SquadPitch);
         echoMix: 0, echoTime: 0.3, echoFeedback: 0.35,
         eightD: false, eightDSpeed: 0.15,
         limiter: true, volume: 0.9,
+        hifi: false, // только lean: звук идёт мимо всей обработки (эквалайзер и эффекты не действуют)
       };
     }
 
@@ -188,7 +189,7 @@ registerProcessor('squad-pitch', SquadPitch);
       n.analyser.smoothingTimeConstant = 0.8;
 
       // Сборка графа
-      n.pitchOn = null;
+      n.mode = null;
       if (n.pitch) n.pitch.connect(n.preamp);
       let prev = n.preamp;
       for (const b of n.eq) { prev.connect(b); prev = b; }
@@ -201,7 +202,7 @@ registerProcessor('squad-pitch', SquadPitch);
       n.delay.connect(n.echoWet).connect(n.bus);
       n.revOn = false; n.echoOn = false; n.offT = {};
       this.nodes = n;
-      this._routePitch(); // ветки реверба и эха подключит applyAll() ниже
+      this._route(); // ветки реверба и эха подключит applyAll() ниже
 
       n.bus.connect(n.pan);
       this._routeLimiter();
@@ -250,16 +251,30 @@ registerProcessor('squad-pitch', SquadPitch);
       });
     }
 
-    // pitch-worklet в цепи только когда тон сдвинут (или всегда, если граф не экономный)
-    _routePitch() {
+    // Нужна ли обработка вообще: эквалайзер плоский, эффекты выключены, тон и стерео не тронуты
+    _neutral() {
+      const s = this.state;
+      const eqFlat = !s.eqOn || (!s.preamp && s.eq.every((v) => !v));
+      return eqFlat && !s.bass && s.width === 1 && !s.balance && !s.reverbMix && !s.echoMix && !s.eightD && !s.pitch;
+    }
+
+    // Куда идёт звук с дек (только lean может срезать путь):
+    //  hifi  — сразу на громкость: ни фильтров, ни лимитера, ни пересчёта — бит в бит, как в обычном плеере;
+    //  pitch — через сдвиг тона; eq — обычная цепочка без worklet.
+    _route() {
       const n = this.nodes;
       if (!n) return;
-      const on = !!n.pitch && (!this.lean || Math.abs(this.state.pitch) > 1e-3);
-      if (on === n.pitchOn) return;
-      n.pitchOn = on;
+      const hifi = this.lean && (this.state.hifi || this._neutral());
+      const pitch = !hifi && !!n.pitch && (!this.lean || Math.abs(this.state.pitch) > 1e-3);
+      const mode = hifi ? 'hifi' : pitch ? 'pitch' : 'eq';
+      if (mode === n.mode) return;
+      n.mode = mode;
       try { n.input.disconnect(); } catch (_) {}
-      n.input.connect(on ? n.pitch : n.preamp);
+      n.input.connect(hifi ? n.master : pitch ? n.pitch : n.preamp);
+      if (this.onroute) try { this.onroute(mode); } catch (_) {}
     }
+
+    get hifi() { return !!(this.nodes && this.nodes.mode === 'hifi'); }
 
     // Подключить/отключить ветку эффекта (реверб, эхо) от общей шины.
     // Выключаем с задержкой: сначала гаснет громкость ветки, потом рвём связь — без щелчка.
@@ -334,7 +349,6 @@ registerProcessor('squad-pitch', SquadPitch);
           }
           if (n && n.pitch) {
             n.pitch.parameters.get('ratio').value = Math.pow(2, s.pitch / 12);
-            this._routePitch();
           }
           break;
         }
@@ -389,6 +403,7 @@ registerProcessor('squad-pitch', SquadPitch);
           if (n) this._routeLimiter();
           break;
       }
+      this._route();
     }
 
     get hasPitch() { return !!(this.nodes && this.nodes.pitch); }

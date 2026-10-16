@@ -298,3 +298,7 @@ html.apk .rz-row span { color: var(--muted); font-size: 13px; }
 html.apk .rz-row:active { background: var(--md-container-highest); }
 html.apk .sheet .chips .btn { min-height: 36px; }
 html.apk .rz-art:not(img) { background: var(--md-container-high); }
+
+/* Hi-Fi */
+html.apk .hifi-st { margin: 10px 0 0; font-size: 13px; color: var(--muted); }
+html.apk .hifi-st.on { color: var(--accent); font-weight: 600; }
