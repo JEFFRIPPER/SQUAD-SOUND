@@ -590,3 +590,6 @@ input[type=range]::-moz-range-thumb { width: 20px; height: 20px; border: 0; back
 .web-res.added .web-add { color: var(--muted); }
 .web-res .t-art img { width: 100%; height: 100%; object-fit: cover; }
 .web-spin { margin: 0 auto; }
+
+/* Длинные списки: браузер не считает раскладку и отрисовку строк за пределами экрана */
+.tracklist > li.track { content-visibility: auto; contain-intrinsic-size: auto 58px; }

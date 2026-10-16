@@ -353,10 +353,10 @@
     return list.filter((t) => matches(t, q)).map((t, pos) => ({ t, pos }));
   }
 
-  function artHtml(t) {
-    if (t.thumb) return '<div class="t-art"><img loading="lazy" alt="" src="' + t.thumb + '"></div>';
+  function artHtml(t, letter) {
+    if (t.thumb) return '<div class="t-art"><img loading="lazy" decoding="async" alt="" src="' + esc(t.thumb) + '"></div>';
     const h = hueOf(t.artist + t.title);
-    return '<div class="t-art" style="background:linear-gradient(135deg,hsl(' + h + ',70%,50%),hsl(' + ((h + 50) % 360) + ',80%,40%))"></div>';
+    return '<div class="t-art" style="background:linear-gradient(135deg,hsl(' + h + ',70%,50%),hsl(' + ((h + 50) % 360) + ',80%,40%))">' + (letter || '') + '</div>';
   }
 
   function setHead(html) { $('lib-head').innerHTML = html; }
@@ -371,6 +371,7 @@
 
   function renderLib() {
     lastRender = Date.now();
+    renderLib.gen = (renderLib.gen || 0) + 1;
     const q = $('search').value.trim().toLowerCase();
     const tab = view.tab;
     const ol = $('tracklist');
@@ -482,22 +483,23 @@
         (total ? '<button class="btn" data-act="play-all">▶</button><button class="btn" data-act="shuffle-all">⤮</button>' : '') + extra);
     }
 
+    // Строки собираем одной HTML-строкой: на тысячах треков это в разы быстрее, чем createElement на каждую
+    const tail = '<div class="eqbars"><i></i><i></i><i></i></div><button class="t-more" title="Ещё">⋮</button>' +
+      (reorder ? '<span class="t-handle" title="Перетащить">≡</span>' : '') + '</li>';
+    const rows = new Array(items.length);
     items.forEach((it, idx) => {
       const t = it.t;
       const playing = tab === 'queue' ? it.pos === qpos : t === cur;
-      const li = document.createElement('li');
-      li.className = 'track' + (playing ? ' playing' : '') + (tab === 'queue' && it.pos < qpos ? ' done' : '');
-      li.dataset.idx = idx;
-      li.innerHTML = artHtml(t) +
-        '<div class="t-info"><div class="t-title"></div><div class="t-artist"></div></div>' +
-        '<div class="eqbars"><i></i><i></i><i></i></div>' +
-        '<button class="t-more" title="Ещё">⋮</button>' +
-        (reorder ? '<span class="t-handle" title="Перетащить">≡</span>' : '');
-      if (!t.thumb) li.querySelector('.t-art').textContent = (t.title[0] || '?').toUpperCase();
-      li.querySelector('.t-title').textContent = t.title;
-      li.querySelector('.t-artist').textContent = t.artist + (t.album && tab !== 'albums' ? ' · ' + t.album : '');
-      frag.appendChild(li);
+      rows[idx] = '<li class="track' + (playing ? ' playing' : '') + (tab === 'queue' && it.pos < qpos ? ' done' : '') + '" data-idx="' + idx + '">' +
+        artHtml(t, esc((t.title[0] || '?').toUpperCase())) +
+        '<div class="t-info"><div class="t-title">' + esc(t.title) + '</div><div class="t-artist">' +
+        esc(t.artist + (t.album && tab !== 'albums' ? ' · ' + t.album : '')) + '</div></div>' + tail;
     });
+    // первый экран — сразу, остальное следующим кадром, чтобы переключение вкладок не подвисало
+    const gen = renderLib.gen = (renderLib.gen || 0) + 1;
+    const FIRST = 80;
+    ol.insertAdjacentHTML('beforeend', rows.slice(0, FIRST).join(''));
+    if (rows.length > FIRST) setTimeout(() => { if (renderLib.gen === gen) ol.insertAdjacentHTML('beforeend', rows.slice(FIRST).join('')); }, 0);
     if (!items.length && (tracks.length || tab === 'telegram' || tab === 'online')) {
       const li = document.createElement('li');
       li.className = 'hint pad';
@@ -1044,7 +1046,8 @@
     tracks = []; byKey.clear(); queue = []; context = []; qpos = -1;
     renderLib(); saveLibrary(); showMeta();
   };
-  $('search').addEventListener('input', renderLib);
+  let searchT = null;
+  $('search').addEventListener('input', () => { clearTimeout(searchT); searchT = setTimeout(renderLib, tracks.length > 500 ? 180 : 60); });
 
   // drag & drop
   let dragDepth = 0;
