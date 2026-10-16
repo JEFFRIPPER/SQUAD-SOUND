@@ -180,6 +180,7 @@
   }
 
   async function logout() {
+    pf.stop = true;
     try { await ensure(); await client.invoke(new G.Api.auth.LogOut()); } catch (_) {}
     await dropSession();
     ls.set('tracks', null); ls.set('sources', null);
@@ -236,14 +237,14 @@
 
   const saved = () => ls.get('tracks', []).filter((t) => t.tg && t.tg.doc); // старые треки из чатов больше не показываем
 
-  // Скачать трек (или взять из кэша). onProgress(0..1)
+  // Скачать трек (или взять из кэша). onProgress(0..1); docs — уже полученный список документов профиля
   const loading = new Map();
-  function blob(t, onProgress) {
+  function blob(t, onProgress, docs) {
     if (loading.has(t.key)) return loading.get(t.key);
     const p = (async () => {
       const hit = await cache.get(t.key);
       if (hit) return hit;
-      const doc = (await profileDocs()).find((d) => d.id.toString() === t.tg.doc);
+      const doc = (docs || await profileDocs()).find((d) => d.id.toString() === t.tg.doc);
       if (!doc) throw new Error('Трека больше нет в профиле');
       const buf = await client.downloadMedia(doc, {
         progressCallback: (got, total) => { if (onProgress) onProgress(Number(total) ? Number(got) / Number(total) : 0); },
@@ -260,12 +261,47 @@
 
   async function cachedKeys() { return new Set(await cache.keys()); }
 
+  // Фоновая загрузка всех треков профиля в кэш: по одному, список документов — один раз.
+  // onStep(done, total, track) после каждого трека. Повторный вызов во время работы ничего не делает.
+  const pf = { run: null, stop: false, done: 0, total: 0 };
+  function prefetch(list, onStep) {
+    if (pf.run) return pf.run;
+    pf.stop = false;
+    pf.run = (async () => {
+      const have = new Set(await cache.keys());
+      const todo = list.filter((t) => t.tg && t.tg.doc && !have.has(t.key));
+      pf.done = 0; pf.total = todo.length;
+      let failed = 0;
+      if (!todo.length) return { done: 0, failed: 0, total: 0 };
+      let docs = await profileDocs();
+      for (const t of todo) {
+        if (pf.stop || st.phase !== 'ready') break;
+        try {
+          await blob(t, null, docs);
+        } catch (e) {
+          const m = (e && (e.errorMessage || e.message)) || '';
+          if (/FILE_REFERENCE/.test(m)) { // ссылки на файлы устарели — берём список заново и пробуем ещё раз
+            docs = await profileDocs();
+            try { await blob(t, null, docs); } catch (_) { failed++; }
+          } else if (/quota|QuotaExceeded/i.test(m + (e && e.name))) { failed += todo.length - pf.done; break; } // память кончилась
+          else failed++;
+        }
+        pf.done++;
+        if (onStep) try { onStep(pf.done, pf.total, t); } catch (_) {}
+      }
+      return { done: pf.done - failed, failed, total: pf.total };
+    })();
+    pf.run.finally(() => { pf.run = null; }).catch(() => {});
+    return pf.run;
+  }
+
   window.SquadTG = {
     configured,
     state: st,
     on(cb) { subs.add(cb); return () => subs.delete(cb); },
     resume, login, submit, cancel, logout,
-    sync, saved, blob,
+    sync, saved, blob, prefetch,
+    get prefetching() { return pf.run ? { done: pf.done, total: pf.total } : null; },
     cachedKeys,
     cached: async (key) => !!(await cache.get(key)),
     uncache: (key) => cache.del(key),

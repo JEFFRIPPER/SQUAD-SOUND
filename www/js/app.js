@@ -1609,12 +1609,33 @@
       tgBusy = false;
       if (view.tab === 'telegram') renderLib();
     }
+    tgPrefetch();
+  }
+
+  // Все треки профиля скачиваются сами в фоне, чтобы играли сразу и без сети
+  async function tgPrefetch() {
+    if (!TG || !TG.prefetch || TG.prefetching || TG.state.phase !== 'ready') return;
+    const list = tracks.filter((t) => t.tg);
+    if (!list.length) return;
+    let lastHead = 0;
+    try {
+      const r = await TG.prefetch(list, (done, total, t) => {
+        const tr = byKey.get(t.key);
+        if (tr) { tr.metaDone = false; loadMeta(tr).then(() => scheduleRender()).catch(() => {}); } // теги и обложка из файла
+        if (view.tab === 'telegram' && Date.now() - lastHead > 700) { lastHead = Date.now(); renderLib(); }
+      });
+      if (r && r.total) toast('Telegram: скачано ' + tracksWord(r.done) + (r.failed ? ', не скачалось ' + r.failed : ''));
+    } catch (e) {
+      console.warn('Telegram, фоновая загрузка:', e);
+    }
+    if (view.tab === 'telegram') renderLib();
   }
 
   function tgHead(total) {
     const me = TG.state.me;
     return '<div class="lh-title">Telegram <span class="lh-sub">' +
-      esc(tgBusy ? 'обновляю…' : (me ? me.name + ' · ' : '') + tracksWord(total)) + '</span></div>' +
+      esc(tgBusy ? 'обновляю…' : (me ? me.name + ' · ' : '') + tracksWord(total) +
+        (TG.prefetching ? ' · скачиваю ' + TG.prefetching.done + '/' + TG.prefetching.total : '')) + '</span></div>' +
       '<button class="icon-btn" data-act="tg-sync" title="Обновить"' + (tgBusy ? ' disabled' : '') + '>⟳</button>' +
       (total ? '<button class="btn" data-act="play-all">▶</button><button class="btn" data-act="shuffle-all">⤮</button>' : '') +
       '<button class="btn ghost" data-act="tg-logout">Выйти</button>';
