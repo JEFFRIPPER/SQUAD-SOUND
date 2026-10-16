@@ -1,7 +1,7 @@
 /* SQUAD SOUND — аудиодвижок на Web Audio API.
  *
  * Цепочка:
- * <audio> → pitch (AudioWorklet) → preamp → EQ x10 → bass → width(M/S)
+ * <audio A|B> → (кроссфейд) → pitch (AudioWorklet) → preamp → EQ x10 → bass → width(M/S)
  *        → [dry | reverb | echo] → pan (+8D LFO) → limiter → master → analyser → out
  */
 (function () {
@@ -85,8 +85,10 @@ registerProcessor('squad-pitch', SquadPitch);
   }
 
   class AudioEngine {
-    constructor(audioEl) {
-      this.audio = audioEl;
+    // Две «деки» (два <audio>) — для кроссфейда и переходов без пауз.
+    constructor(audioEl, audioEl2) {
+      this.decks = [audioEl, audioEl2].filter(Boolean);
+      this.active = 0;
       this.ctx = null;
       this.ready = null;
       this.state = {
@@ -114,7 +116,13 @@ registerProcessor('squad-pitch', SquadPitch);
       const n = {};
       this.nodes = n;
 
-      n.source = ctx.createMediaElementSource(this.audio);
+      n.input = ctx.createGain();
+      n.deckGain = this.decks.map((el, i) => {
+        const g = ctx.createGain();
+        g.gain.value = i === this.active ? 1 : 0;
+        ctx.createMediaElementSource(el).connect(g).connect(n.input);
+        return g;
+      });
 
       n.pitch = null;
       try {
@@ -176,7 +184,7 @@ registerProcessor('squad-pitch', SquadPitch);
       n.analyser.smoothingTimeConstant = 0.8;
 
       // Сборка графа
-      let head = n.source;
+      let head = n.input;
       if (n.pitch) { head.connect(n.pitch); head = n.pitch; }
       head.connect(n.preamp);
       let prev = n.preamp;
@@ -198,6 +206,43 @@ registerProcessor('squad-pitch', SquadPitch);
       this._lastIr = null;
       this.applyAll();
       return this;
+    }
+
+    get audio() { return this.decks[this.active]; }
+    get idle() { return this.decks[1 - this.active] || null; }
+
+    // Мгновенно переключить активную деку (без фейда)
+    swap() {
+      if (!this.idle) return;
+      this.active = 1 - this.active;
+      this._gains(0);
+    }
+
+    // Плавный переход на другую деку (равная мощность), seconds — длительность
+    crossfade(seconds) {
+      if (!this.idle) return;
+      this.active = 1 - this.active;
+      this._gains(seconds);
+    }
+
+    _gains(seconds) {
+      const n = this.nodes;
+      if (!n) return;
+      const t = this.ctx.currentTime;
+      n.deckGain.forEach((g, i) => {
+        const on = i === this.active;
+        const from = g.gain.value;
+        g.gain.cancelScheduledValues(t);
+        if (!seconds) { g.gain.setValueAtTime(on ? 1 : 0, t); return; }
+        const N = 64, curve = new Float32Array(N);
+        for (let k = 0; k < N; k++) {
+          const x = k / (N - 1);
+          const target = on ? Math.sin(x * Math.PI / 2) : Math.cos(x * Math.PI / 2);
+          curve[k] = on ? Math.max(from, target) : Math.min(from, target);
+        }
+        try { g.gain.setValueCurveAtTime(curve, t + 0.005, seconds); }
+        catch (_) { g.gain.setValueAtTime(on ? 1 : 0, t); }
+      });
     }
 
     _routeLimiter() {
@@ -237,27 +282,29 @@ registerProcessor('squad-pitch', SquadPitch);
 
     apply(key) {
       const s = this.state;
-      const a = this.audio;
+      const decks = this.decks;
       const n = this.nodes;
       const t = this.ctx ? this.ctx.currentTime : 0;
       const smooth = (param, v) => param.setTargetAtTime(v, t, 0.03);
 
       switch (key) {
         case 'speed': case 'pitch': case 'vinyl': {
-          a.playbackRate = s.speed;
           // Винил: тон меняется вместе со скоростью (Nightcore / Slowed)
           const keep = !s.vinyl;
-          a.preservesPitch = keep;
-          a.mozPreservesPitch = keep;
-          a.webkitPreservesPitch = keep;
+          for (const a of decks) {
+            a.playbackRate = s.speed;
+            a.preservesPitch = keep;
+            a.mozPreservesPitch = keep;
+            a.webkitPreservesPitch = keep;
+          }
           if (n && n.pitch) {
             n.pitch.parameters.get('ratio').value = Math.pow(2, s.pitch / 12);
           }
           break;
         }
         case 'volume':
-          if (n) { a.volume = 1; smooth(n.master.gain, s.volume * s.volume); }
-          else a.volume = s.volume * s.volume;
+          if (n) { decks.forEach((a) => { a.volume = 1; }); smooth(n.master.gain, s.volume * s.volume); }
+          else decks.forEach((a) => { a.volume = s.volume * s.volume; });
           break;
         case 'eq': case 'eqOn': case 'preamp':
           if (!n) break;
