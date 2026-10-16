@@ -21,4 +21,8 @@ grep -q "users.getSavedMusic#788d7fe3" node_modules/telegram/tl/apiTl.js
 grep -q "users.savedMusic#34a2f297" node_modules/telegram/tl/apiTl.js
 NODE_PATH="$TMP/node_modules" npx esbuild "$ROOT/scripts/telegram-entry.js" --bundle --minify --platform=browser --format=iife --target=es2020 \
   --legal-comments=eof --define:process.env.NODE_ENV='"production"' --outfile="$ROOT/www/js/vendor/telegram.min.js"
+# GramJS кэширует разобранную схему в localStorage («GramJs:apiCache») и потом не читает новую:
+# после обновления в кэше не было users.getSavedMusic. Ключ со своей меткой — при смене схемы меняем метку.
+sed -i 's/"GramJs:apiCache"/"GramJs:apiCache:squad-198-music"/' "$ROOT/www/js/vendor/telegram.min.js"
+grep -q 'GramJs:apiCache:squad-198-music' "$ROOT/www/js/vendor/telegram.min.js"
 rm -rf "$TMP"
