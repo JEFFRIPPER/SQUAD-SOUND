@@ -269,3 +269,32 @@ html.apk .pr-x { width: 26px; height: 26px; border: 0; border-radius: 50%; backg
 html.apk .pr-x:active { background: var(--md-container-highest); }
 html.apk #pr-save svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; vertical-align: -3px; }
 html.apk .lyr-src { margin: 18px 0 8px; font-size: 12px; color: var(--muted); text-align: center; }
+
+/* Импорт плейлиста */
+html.apk .im-text { display: block; width: 100%; box-sizing: border-box; min-height: 150px; margin: 6px 0; padding: 12px 16px; border-radius: 16px; resize: vertical; font: inherit; font-size: 14px; line-height: 1.4; }
+html.apk .im-miss { margin: 14px 0 0; padding-left: 26px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+html.apk .sheet .chips svg, html.apk .card .chips svg { width: 16px; height: 16px; fill: currentColor; vertical-align: -3px; }
+
+/* Что играет? */
+html.apk .h-rz { width: 44px; height: 44px; border-radius: 50%; background: var(--md-container-high); }
+html.apk .h-rz svg, html.apk .rz-pulse svg, html.apk .rz-art svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+html.apk .rz { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; padding: 12px 0 8px; }
+html.apk .rz .tg-spin { margin: 18px auto 6px; }
+html.apk .rz-pulse { width: 96px; height: 96px; margin: 14px 0 8px; display: grid; place-items: center; border-radius: 50%; background: var(--accent); color: var(--on-accent); animation: rz-p 1.2s ease-out infinite; }
+html.apk .rz-pulse svg { width: 44px; height: 44px; }
+@keyframes rz-p { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); } 100% { box-shadow: 0 0 0 28px transparent; } }
+html.apk .rz-t { margin: 4px 0; font-size: 18px; font-weight: 600; }
+html.apk .rz-res { display: flex; align-items: center; gap: 14px; width: 100%; text-align: left; margin-bottom: 6px; }
+html.apk .rz-res > div:last-child { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+html.apk .rz-res b { font-size: 18px; }
+html.apk .rz-res span, html.apk .rz-res small { color: var(--muted); }
+html.apk .rz-art { width: 84px; height: 84px; flex-shrink: 0; border-radius: 14px; object-fit: cover; display: grid; place-items: center; background: var(--md-container-high); }
+html.apk .rz-art svg { width: 36px; height: 36px; color: var(--accent); }
+html.apk .rz .chips { justify-content: center; }
+html.apk .rz-h { margin: 18px 0 6px; font-size: 14px; color: var(--muted); font-weight: 600; }
+html.apk .rz-hist { display: flex; flex-direction: column; }
+html.apk .rz-row { display: flex; flex-direction: column; align-items: flex-start; padding: 10px 12px; border: 0; border-radius: 14px; background: transparent; color: var(--text); font: inherit; text-align: left; }
+html.apk .rz-row span { color: var(--muted); font-size: 13px; }
+html.apk .rz-row:active { background: var(--md-container-highest); }
+html.apk .sheet .chips .btn { min-height: 36px; }
+html.apk .rz-art:not(img) { background: var(--md-container-high); }

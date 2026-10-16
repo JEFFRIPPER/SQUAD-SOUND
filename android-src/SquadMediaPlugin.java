@@ -96,30 +96,51 @@ public class SquadMediaPlugin extends Plugin {
         call.resolve();
     }
 
-    // POST формы для скробблинга Last.fm (WebView упирается в CORS). Только ws.audioscrobbler.com.
+    // Запросы мимо CORS WebView — только к своему списку адресов:
+    // POST формы — скробблинг Last.fm и распознавание песни AudD; GET — плейлист по ссылке (Яндекс Музыка, Deezer, Spotify).
+    private static final String[] POST_OK = { "https://ws.audioscrobbler.com/", "https://api.audd.io/" };
+    private static final String[] GET_OK = { "https://api.music.yandex.net/", "https://api.deezer.com/", "https://open.spotify.com/embed/" };
+
+    private static boolean allowed(String url, String[] list) {
+        for (String p : list) if (url.startsWith(p)) return true;
+        return false;
+    }
+
     @PluginMethod
     public void post(PluginCall call) {
         String url = call.getString("url", "");
-        String body = call.getString("body", "");
-        if (!url.startsWith("https://ws.audioscrobbler.com/")) { call.reject("url"); return; }
+        if (!allowed(url, POST_OK)) { call.reject("url"); return; }
+        http(call, url, call.getString("body", ""));
+    }
+
+    @PluginMethod
+    public void get(PluginCall call) {
+        String url = call.getString("url", "");
+        if (!allowed(url, GET_OK)) { call.reject("url"); return; }
+        http(call, url, null);
+    }
+
+    private void http(PluginCall call, String url, String body) {
         new Thread(() -> {
             HttpURLConnection c = null;
             try {
                 c = (HttpURLConnection) new URL(url).openConnection();
-                c.setRequestMethod("POST");
-                c.setDoOutput(true);
                 c.setConnectTimeout(15000);
-                c.setReadTimeout(20000);
-                c.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=utf-8");
-                c.setRequestProperty("User-Agent", "SQUAD-SOUND");
-                try (OutputStream o = c.getOutputStream()) { o.write(body.getBytes(StandardCharsets.UTF_8)); }
+                c.setReadTimeout(30000);
+                c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android) SQUAD-SOUND");
+                if (body != null) {
+                    c.setRequestMethod("POST");
+                    c.setDoOutput(true);
+                    c.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=utf-8");
+                    try (OutputStream o = c.getOutputStream()) { o.write(body.getBytes(StandardCharsets.UTF_8)); }
+                }
                 int code = c.getResponseCode();
                 InputStream in = code >= 400 ? c.getErrorStream() : c.getInputStream();
                 ByteArrayOutputStream buf = new ByteArrayOutputStream();
                 if (in != null) {
                     byte[] b = new byte[8192];
                     int n;
-                    while ((n = in.read(b)) > 0) buf.write(b, 0, n);
+                    while ((n = in.read(b)) > 0 && buf.size() < 8 * 1024 * 1024) buf.write(b, 0, n);
                     in.close();
                 }
                 JSObject r = new JSObject();
