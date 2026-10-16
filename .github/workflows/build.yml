@@ -112,6 +112,11 @@ jobs:
         with:
           path: out
           merge-multiple: true
+      # «Что нового» = заголовок коммита (название слитого PR); приложение показывает его в панели обновления
+      - id: notes
+        env:
+          MSG: ${{ github.event.head_commit.message }}
+        run: echo "title=$(printf '%s' "$MSG" | head -n1 | sed 's/ (#[0-9]*)$//')" >> "$GITHUB_OUTPUT"
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.version.outputs.version }}
@@ -120,7 +125,9 @@ jobs:
           make_latest: true
           files: out/*
           body: |
+            **Что нового:** ${{ steps.notes.outputs.title }}
+
             **Windows:** `SQUAD-SOUND-…-setup.exe` — установщик, `SQUAD-SOUND-…-portable.exe` — без установки.
             **Android:** `SQUAD-SOUND-…-android.apk` — установите, разрешив установку из неизвестных источников.
 
-            Дальше обновляться вручную не нужно: установщик Windows скачивает новые версии сам, а Android и portable показывают кнопку «Скачать» при выходе новой версии.
+            Дальше обновляться вручную не нужно: приложение само находит новую версию и показывает кнопку «Обновить». Установщик Windows и Android скачивают её внутри приложения, portable-версия открывает файл на GitHub.
