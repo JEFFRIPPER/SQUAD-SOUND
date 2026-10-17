@@ -443,7 +443,7 @@
     else if (k === 'like') { if (t) toggleLike(t.key); }
     else if (k === 'queue') { closePlayer(); setTimeout(() => { go('library'); S.openLib('queue'); }, 0); }
     else if (k === 'plus') $('np-playlist').click();
-    else if (k === 'lyrics') openLyrics();
+    else if (k === 'lyrics') openLyrics(false);
     else if (k === 'timer') openTimer();
     else if (k === 'speed') openSpeed();
   });
@@ -600,6 +600,7 @@
   function openMore() {
     const body = openSheet('Ещё', '<div class="sheet-list">' +
       '<button data-m="timer">' + svg(IC.timer) + 'Таймер сна</button>' +
+      '<button data-m="kara">' + svg(IC.mic) + 'Караоке: убрать голос, текст на весь экран</button>' +
       '<button data-m="edit">' + svg(IC.lyrics) + 'Название, исполнитель, обложка</button>' +
       '<button data-m="cover">' + svg(IC.image) + 'Своя обложка</button>' +
       '<button data-m="queue">' + svg(IC.queue) + 'Очередь</button>' +
@@ -610,6 +611,7 @@
       const k = b.dataset.m;
       if (k === 'timer') openTimer();
       else if (k === 'cover') openCoverSheet();
+      else if (k === 'kara') openLyrics(true);
       else if (k === 'edit') { closeSheet(); const t = S.cur(); if (t) S.editTrack(t.key); }
       else {
         closeSheet(); closePlayer();
@@ -791,9 +793,29 @@
   let lyrUI = () => {};
 
   let lyrBody = null;
-  function openLyrics() {
+  // kara — сразу в режиме караоке: голос убран, текст крупно. Закрыли лист — голос возвращается
+  function openLyrics(kara) {
     lyr.open = true;
-    lyrBody = openSheet('Текст', '<div class="lyr"></div>', 'tall lyr-sheet', () => { lyr.open = false; cancelAnimationFrame(lyr.raf); });
+    let k = false;
+    // кнопка живёт в самом листе, а не в прокрутке текста (там сверху затухание)
+    const kb = document.createElement('button');
+    kb.className = 'chip kara-btn';
+    kb.innerHTML = svg(IC.mic) + '<span>Караоке</span>';
+    const setKara = (on) => {
+      k = on;
+      S.setFx('karaoke', on ? 1 : 0);
+      sheet.classList.toggle('kara', on);
+      kb.classList.toggle('on', on);
+      kb.lastChild.textContent = on ? 'Голос убран' : 'Караоке';
+      lyr.cur = -1; // перецентрировать строку под новый размер шрифта
+    };
+    kb.onclick = () => setKara(!k);
+    lyrBody = openSheet('Текст', '<div class="lyr"></div>', 'tall lyr-sheet', () => {
+      lyr.open = false; cancelAnimationFrame(lyr.raf); kb.remove();
+      if (k) { S.setFx('karaoke', 0); sheet.classList.remove('kara'); }
+    });
+    sheet.append(kb);
+    if (kara) setKara(true);
     lyrBody.addEventListener('click', (e) => {
       if (e.target.closest('[data-lyr="retry"]')) {
         const t = S.cur();

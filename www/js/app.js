@@ -62,7 +62,7 @@
     theme: 'squad', accent: null, coverAccent: false, shuffle: false, repeat: 'off', eqPreset: 'flat',
     tab: 'library', libTab: 'tracks', sort: 'added', crossfade: 0, autoScan: true, netCovers: true,
   }, store.get('settings', {}));
-  engine.load(store.get('fx', {}));
+  engine.load(Object.assign(store.get('fx', {}), { karaoke: 0 })); // караоке не переживает перезапуск — иначе «пропал голос»
 
   let tracks = [];            // {key, name, title, artist, album, albumArtist, genre, year, no, disc, folder, thumb, accent, file?, path?}
   const byKey = new Map();
@@ -1247,6 +1247,7 @@
     width: (v) => Math.round(v * 100) + '%',
     balance: (v) => (Math.abs(v) < 0.01 ? 'центр' : (v < 0 ? 'Л ' : 'П ') + Math.round(Math.abs(v) * 100) + '%'),
     eightDSpeed: (v) => (+v).toFixed(2) + ' Гц',
+    karaoke: (v) => (v > 0.01 ? Math.round(v * 100) + '%' : 'выкл'),
   };
   for (const key of Object.keys(FX_FMT)) {
     $(key).addEventListener('input', (e) => {
@@ -1269,7 +1270,7 @@
     ['Радио', { width: 0, bass: 0 }],
   ];
   const FX_KEYS = ['speed', 'pitch', 'vinyl', 'reverbMix', 'reverbSize', 'echoMix', 'echoTime', 'echoFeedback',
-    'bass', 'width', 'balance', 'eightD', 'eightDSpeed'];
+    'bass', 'width', 'balance', 'eightD', 'eightDSpeed', 'karaoke'];
   FX_PRESETS.forEach(([name, vals]) => {
     const b = document.createElement('button');
     b.className = 'chip'; b.textContent = name;
@@ -1305,6 +1306,7 @@
     if (s.echoMix > 0.01) fx.push('Эхо');
     if (s.eightD) fx.push('8D');
     if (s.bass > 0) fx.push('Бас');
+    if (s.karaoke > 0.01) fx.push('Караоке');
     $('q-fx').textContent = fx.join(' · ');
   }
 
@@ -2049,7 +2051,7 @@
       settings.eqPreset = 'custom'; saveSettings();
       syncEq(); syncFx(); saveFx();
     },
-    setFx(k, v) { engine.set(k, v); saveFx(); },
+    setFx(k, v) { engine.set(k, v); syncFx(); saveFx(); },
     pause: () => decks.forEach((d) => d.pause()),
     // включить список ключей с позиции i; shuffle — перемешать
     play(keys, i, shuffle) {

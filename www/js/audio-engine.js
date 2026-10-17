@@ -103,6 +103,7 @@ registerProcessor('squad-pitch', SquadPitch);
         echoMix: 0, echoTime: 0.3, echoFeedback: 0.35,
         eightD: false, eightDSpeed: 0.15,
         limiter: true, volume: 0.9,
+        karaoke: 0, // 0..1: убрать голос (то, что посередине стерео), бас остаётся
         hifi: false, // только lean: звук идёт мимо всей обработки (эквалайзер и эффекты не действуют)
       };
     }
@@ -162,6 +163,13 @@ registerProcessor('squad-pitch', SquadPitch);
       n.split.connect(n.rl, 1); n.rl.connect(n.merge, 0, 0);
       n.split.connect(n.rr, 1); n.rr.connect(n.merge, 0, 1);
       n.split.connect(n.lr, 0); n.lr.connect(n.merge, 0, 1);
+      // Караоке: голос обычно ровно посередине, L−R его вычитает. Низы (бочка, бас) тоже посередине —
+      // возвращаем их отдельно через фильтр. Подключается только когда включено.
+      n.kLow = ctx.createBiquadFilter();
+      n.kLow.type = 'lowpass'; n.kLow.frequency.value = 170; n.kLow.Q.value = 0.7;
+      n.kGain = ctx.createGain(); n.kGain.gain.value = 0;
+      n.kLow.connect(n.kGain); n.kGain.connect(n.merge, 0, 0); n.kGain.connect(n.merge, 0, 1);
+      n.kOn = false;
 
       n.dry = ctx.createGain();
       n.convolver = ctx.createConvolver();
@@ -255,7 +263,7 @@ registerProcessor('squad-pitch', SquadPitch);
     _neutral() {
       const s = this.state;
       const eqFlat = !s.eqOn || (!s.preamp && s.eq.every((v) => !v));
-      return eqFlat && !s.bass && s.width === 1 && !s.balance && !s.reverbMix && !s.echoMix && !s.eightD && !s.pitch;
+      return eqFlat && !s.bass && s.width === 1 && !s.karaoke && !s.balance && !s.reverbMix && !s.echoMix && !s.eightD && !s.pitch;
     }
 
     // Куда идёт звук с дек (только lean может срезать путь):
@@ -364,13 +372,17 @@ registerProcessor('squad-pitch', SquadPitch);
         case 'bass':
           if (n) smooth(n.bass.gain, s.bass);
           break;
-        case 'width': {
+        case 'width': case 'karaoke': {
           if (!n) break;
           const w = s.width;
-          const same = (1 + w) / 2;
-          const cross = (1 - w) / 2;
-          smooth(n.ll.gain, same); smooth(n.rr.gain, same);
-          smooth(n.rl.gain, cross); smooth(n.lr.gain, cross);
+          const k = Math.max(0, Math.min(1, +s.karaoke || 0));
+          // обычная ширина → при k=1 оба канала = L−R (в моно на динамике телефона голос тоже пропадает, музыка — нет)
+          const same = (1 + w) / 2, cross = (1 - w) / 2;
+          smooth(n.ll.gain, same * (1 - k) + k); smooth(n.rr.gain, same * (1 - k) - k);
+          smooth(n.rl.gain, cross * (1 - k) - k); smooth(n.lr.gain, cross * (1 - k) + k);
+          if (k && !n.kOn) { n.bass.connect(n.kLow); n.kOn = true; }
+          smooth(n.kGain.gain, k);
+          if (!k && n.kOn) { clearTimeout(n.kT); n.kT = setTimeout(() => { if (!this.state.karaoke && n.kOn) { try { n.bass.disconnect(n.kLow); } catch (_) {} n.kOn = false; } }, 400); }
           break;
         }
         case 'balance':

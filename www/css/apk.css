@@ -330,3 +330,14 @@ html.apk .hifi-st.on { color: var(--accent); font-weight: 600; }
 .spd-chips { flex-wrap: nowrap; justify-content: space-between; margin-bottom: 10px; }
 .spd-chips .chip { padding-left: 10px; padding-right: 10px; }
 .im-old { margin: 18px 0 0; font-size: 14px; color: var(--muted); font-weight: 600; }
+/* караоке: кнопка в листе текста и режим «на весь экран» */
+html.apk .sheet.lyr-sheet { position: relative; }
+.sheet .kara-btn { position: absolute; top: 12px; right: 16px; z-index: 2; display: flex; align-items: center; gap: 6px; }
+.sheet .kara-btn svg { width: 18px; height: 18px; }
+.sheet .kara-btn.on { background: var(--accent); color: var(--on-accent, #fff); border-color: transparent; }
+.sheet.lyr-sheet .sheet-title { padding-right: 140px; }
+html.apk .sheet.kara { max-height: none; height: 100vh; height: 100dvh; border-radius: 0;
+  background: radial-gradient(120% 70% at 50% 110%, color-mix(in srgb, var(--accent) 35%, transparent), transparent 70%), var(--bg); }
+.sheet.kara .lyr p[data-t] { font-size: 34px; text-align: center; padding: 12px 0; color: color-mix(in srgb, var(--text) 25%, transparent); }
+.sheet.kara .lyr p[data-t].on { color: #fff; transform: scale(1.08); text-shadow: 0 0 24px var(--accent), 0 0 2px var(--accent); }
+.sheet.kara .lyr-plain { font-size: 22px; text-align: center; }
