@@ -23,6 +23,8 @@ function createWindow() {
     title: 'SQUAD SOUND',
     icon: path.join(__dirname, '..', 'build', 'icon.png'),
     autoHideMenuBar: true,
+    // своя шапка окна в стиле Сквада (www: .titlebar); рамка и привязка к краям экрана остаются системными
+    titleBarStyle: 'hidden',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -32,6 +34,9 @@ function createWindow() {
   });
   win.removeMenu();
   win.loadURL('app://squad/index.html');
+  const sendMax = () => win.webContents.send('win-state', { max: win.isMaximized(), full: win.isFullScreen() });
+  for (const ev of ['maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen']) win.on(ev, sendMax);
+  win.webContents.on('did-finish-load', sendMax);
   // Наружу открываем только https, а уйти со страницы приложения окну нельзя (squadNative не должен достаться чужой странице)
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https:\/\//.test(url)) shell.openExternal(url); return { action: 'deny' }; });
   win.webContents.on('will-navigate', (e, url) => { if (!url.startsWith('app://squad/')) e.preventDefault(); });
@@ -179,6 +184,27 @@ ipcMain.handle('filter-existing', async (_e, paths) => {
     part.forEach((p, j) => { if (ok[j]) out.push(p); });
   }
   return out;
+});
+
+// Переименовать трек на диске: только аудиофайлы, в той же папке, расширение не меняется; занято — «(2)», «(3)»…
+ipcMain.handle('rename-file', async (_e, p, base) => {
+  if (typeof p !== 'string' || typeof base !== 'string' || !AUDIO_RE.test(p) || /\.(webm|mp4)$/i.test(p)) throw new Error('Not an audio file');
+  const clean = base.replace(/[\\/:*?"<>|\x00-\x1f]+/g, ' ').replace(/\s+/g, ' ').replace(/[. ]+$/, '').trim().slice(0, 180);
+  if (!clean) throw new Error('Пустое имя');
+  const dir = path.dirname(p), ext = path.extname(p);
+  let to = path.join(dir, clean + ext);
+  if (to === p) return p;
+  for (let i = 2; fs.existsSync(to) && to.toLowerCase() !== p.toLowerCase(); i++) to = path.join(dir, clean + ' (' + i + ')' + ext);
+  await fs.promises.rename(p, to);
+  return to;
+});
+
+ipcMain.on('win', (e, act) => {
+  const w = BrowserWindow.fromWebContents(e.sender);
+  if (!w) return;
+  if (act === 'min') w.minimize();
+  else if (act === 'max') { if (w.isFullScreen()) w.setFullScreen(false); else if (w.isMaximized()) w.unmaximize(); else w.maximize(); }
+  else if (act === 'close') w.close();
 });
 
 ipcMain.handle('version', () => app.getVersion());

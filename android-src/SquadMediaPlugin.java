@@ -126,7 +126,11 @@ public class SquadMediaPlugin extends Plugin {
     // Запросы мимо CORS WebView — только к своему списку адресов:
     // POST формы — скробблинг Last.fm и распознавание песни AudD; GET — плейлист по ссылке (Яндекс Музыка, Deezer, Spotify).
     private static final String[] POST_OK = { "https://ws.audioscrobbler.com/", "https://api.audd.io/" };
-    private static final String[] GET_OK = { "https://ws.audioscrobbler.com/2.0/?", "https://api.music.yandex.net/", "https://api.deezer.com/", "https://open.spotify.com/embed/" };
+    private static final String[] GET_OK = { "https://ws.audioscrobbler.com/2.0/?", "https://api.music.yandex.net/", "https://api.deezer.com/", "https://open.spotify.com/embed/",
+        "https://itunes.apple.com/search?" };
+    // обложки из каталогов (поиск обложки по исполнителю и названию)
+    private static final String[] IMG_OK = { "https://cdn-images.dzcdn.net/", "https://e-cdns-images.dzcdn.net/", "https://cdns-images.dzcdn.net/",
+        "https://is1-ssl.mzstatic.com/", "https://is2-ssl.mzstatic.com/", "https://is3-ssl.mzstatic.com/", "https://is4-ssl.mzstatic.com/", "https://is5-ssl.mzstatic.com/" };
 
     private static boolean allowed(String url, String[] list) {
         for (String p : list) if (url.startsWith(p)) return true;
@@ -137,17 +141,25 @@ public class SquadMediaPlugin extends Plugin {
     public void post(PluginCall call) {
         String url = call.getString("url", "");
         if (!allowed(url, POST_OK)) { call.reject("url"); return; }
-        http(call, url, call.getString("body", ""));
+        http(call, url, call.getString("body", ""), false);
     }
 
     @PluginMethod
     public void get(PluginCall call) {
         String url = call.getString("url", "");
         if (!allowed(url, GET_OK)) { call.reject("url"); return; }
-        http(call, url, null);
+        http(call, url, null, false);
     }
 
-    private void http(PluginCall call, String url, String body) {
+    // картинка → base64 в body
+    @PluginMethod
+    public void image(PluginCall call) {
+        String url = call.getString("url", "");
+        if (!allowed(url, IMG_OK)) { call.reject("url"); return; }
+        http(call, url, null, true);
+    }
+
+    private void http(PluginCall call, String url, String body, boolean binary) {
         new Thread(() -> {
             HttpURLConnection c = null;
             try {
@@ -172,7 +184,7 @@ public class SquadMediaPlugin extends Plugin {
                 }
                 JSObject r = new JSObject();
                 r.put("status", code);
-                r.put("body", buf.toString("UTF-8"));
+                r.put("body", binary ? android.util.Base64.encodeToString(buf.toByteArray(), android.util.Base64.NO_WRAP) : buf.toString("UTF-8"));
                 call.resolve(r);
             } catch (Throwable e) {
                 call.reject(String.valueOf(e.getMessage()));

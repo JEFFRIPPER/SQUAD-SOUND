@@ -24,6 +24,12 @@
         <button data-tab="fx" class="tab">Эффекты</button>
         <button data-tab="themes" class="tab">Темы</button>
       </nav>
+      <!-- Кнопки окна в .exe (своя шапка вместо системной) -->
+      <div class="winctl" id="winctl">
+        <button data-win="min" title="Свернуть" aria-label="Свернуть"><svg viewBox="0 0 12 12"><path d="M2 6h8"/></svg></button>
+        <button data-win="max" title="Развернуть" aria-label="Развернуть"><svg class="wc-max" viewBox="0 0 12 12"><rect x="2" y="2" width="8" height="8" rx="1.5"/></svg><svg class="wc-rest" viewBox="0 0 12 12"><path d="M4.5 2.5h5v5M2.5 4.5h5v5h-5z"/></svg></button>
+        <button data-win="close" class="wc-close" title="Закрыть" aria-label="Закрыть"><svg viewBox="0 0 12 12"><path d="m2.5 2.5 7 7M9.5 2.5l-7 7"/></svg></button>
+      </div>
     </header>
     <!-- Плашка «Доступно обновление» -->
     <div class="update-banner" id="update-banner" role="button">
@@ -164,6 +170,13 @@
           </div>
           <label class="switch"><input type="checkbox" id="cover-accent"><span></span>Цвет из обложки трека</label>
           <p class="hint">Акцент подстраивается под обложку, которая сейчас играет. Если у трека нет обложки, остаётся цвет темы.</p>
+        </div>
+        <div class="card">
+          <h3>Обложки и названия</h3>
+          <label class="switch"><input type="checkbox" id="net-covers"><span></span>Подтягивать обложки из интернета</label>
+          <p class="hint">Для трека без обложки ищем её по исполнителю и названию (Deezer, iTunes). Название, исполнителя и обложку можно поправить вручную: меню трека → «Название, исполнитель, обложка…».</p>
+          <div class="row wrap"><button class="btn" id="btn-net-covers">Найти обложки для всей медиатеки</button></div>
+          <p class="hint" id="net-covers-st"></p>
         </div>
         <div class="card about">
           <h3>Обновления</h3>
