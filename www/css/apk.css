@@ -341,3 +341,12 @@ html.apk .sheet.kara { max-height: none; height: 100vh; height: 100dvh; border-r
 .sheet.kara .lyr p[data-t] { font-size: 34px; text-align: center; padding: 12px 0; color: color-mix(in srgb, var(--text) 25%, transparent); }
 .sheet.kara .lyr p[data-t].on { color: #fff; transform: scale(1.08); text-shadow: 0 0 24px var(--accent), 0 0 2px var(--accent); }
 .sheet.kara .lyr-plain { font-size: 22px; text-align: center; }
+
+/* ---------- Профиль: аватар в шапке главной ---------- */
+html.apk .h-rz { margin-left: auto; }
+html.apk .h-me { background: none; border: 0; padding: 0; margin-left: 10px; border-radius: 50%; }
+html.apk .h-me .pf-ava { width: 44px; height: 44px; font-size: 18px; }
+html.apk #panel-profile .pf-hero { flex-direction: column; text-align: center; }
+html.apk #panel-profile .pf-name { text-align: center; }
+html.apk #panel-profile .pf-lv { justify-content: center; }
+html.apk #panel-profile .pf-stats { grid-template-columns: repeat(2, 1fr); }
