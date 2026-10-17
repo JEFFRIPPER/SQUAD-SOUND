@@ -52,57 +52,10 @@
   }
   applyPrefs();
 
-  // ---------- Статистика прослушиваний (локально, без ограничений) ----------
-  // {t: {key: {n, sec, last, title, artist}}, days: {'2026-10-16': sec}, total,
-  //  m: {'2026-10': {t: {key: [n, sec]}, h: [24 × sec], total}}} — помесячно для «Итогов месяца»
-  const stats = Object.assign({ t: {}, days: {}, total: 0 }, ls.get('stats', {}));
-  let statsDirty = false;
-  const p2 = (n) => String(n).padStart(2, '0');
-  const ymd = (d) => d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()); // местная дата, не UTC
-  const today = () => ymd(new Date());
-  const monthOf = (k) => stats.m[k] || (stats.m[k] = { t: {}, h: new Array(24).fill(0), total: 0 });
-  if (!stats.m) {
-    // первый запуск с «Итогами»: текущий месяц собираем из того, что уже накоплено
-    stats.m = {};
-    const mk = today().slice(0, 7);
-    const from = new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime();
-    const M = monthOf(mk);
-    Object.keys(stats.t).forEach((k) => { const e = stats.t[k]; if (e.last >= from) M.t[k] = [e.n, e.sec]; });
-    Object.keys(stats.days).forEach((d) => { if (d.startsWith(mk)) M.total += stats.days[d]; });
-    // время по трекам накоплено за всё время — ужимаем до времени месяца
-    const all = Object.values(M.t).reduce((a, x) => a + x[1], 0);
-    if (all > M.total && all) Object.values(M.t).forEach((x) => { x[1] = Math.round(x[1] * M.total / all); });
-    M.seeded = true;
-  }
-  let counted = null;
-  setInterval(() => {
-    const t = S.cur();
-    if (!t || !S.playing()) return;
-    const e = stats.t[t.key] || (stats.t[t.key] = { n: 0, sec: 0, last: 0 });
-    const d = today();
-    const M = monthOf(d.slice(0, 7));
-    const me = M.t[t.key] || (M.t[t.key] = [0, 0]);
-    e.sec += 5; e.last = Date.now(); e.title = t.title; e.artist = t.artist;
-    me[1] += 5; M.h[new Date().getHours()] += 5; M.total += 5;
-    if (t.genre) e.genre = t.genre;
-    if (counted !== t.key && e.sec >= 30) { e.n++; me[0]++; counted = t.key; } // прослушивание засчитываем после 30 с
-    stats.days[d] = (stats.days[d] || 0) + 5;
-    stats.total += 5;
-    statsDirty = true;
-  }, 5000);
-  setInterval(() => { if (statsDirty) { statsDirty = false; saveStats(); } }, 20000);
-  document.addEventListener('visibilitychange', () => { if (document.hidden && statsDirty) { statsDirty = false; saveStats(); } });
-  function saveStats() {
-    // старые дни и забытые треки не копим бесконечно
-    const days = Object.keys(stats.days).sort();
-    while (days.length > 400) delete stats.days[days.shift()];
-    const months = Object.keys(stats.m).sort();
-    while (months.length > 13) delete stats.m[months.shift()];
-    const keys = Object.keys(stats.t);
-    if (keys.length > 4000) keys.sort((a, b) => stats.t[a].last - stats.t[b].last).slice(0, keys.length - 4000).forEach((k) => delete stats.t[k]);
-    ls.set('stats', stats);
-  }
-  S.on('track', () => { const t = S.cur(); if (t && counted !== t.key) counted = null; });
+  // ---------- Статистика прослушиваний: общий модуль js/stats.js (ПК и телефон) ----------
+  const ST = window.SquadStats;
+  const stats = ST.data;
+  const { p2, ymd, today } = ST;
 
   const dur = (sec) => {
     const m = Math.round(sec / 60);
@@ -290,7 +243,8 @@
 
     let h = '<header class="h-head"><div><div class="h-hello">' + greet() + '</div><div class="h-sub">' +
       (tr.length ? 'В медиатеке ' + tr.length + ' ' + plural(tr.length, 'трек', 'трека', 'треков') : 'Медиатека пока пуста') + '</div></div>' +
-      '<button class="icon-btn h-rz" data-h="rz" aria-label="Что играет?">' + svg(IC.mic) + '</button></header>';
+      '<button class="icon-btn h-rz" data-h="rz" aria-label="Что играет?">' + svg(IC.mic) + '</button>' +
+      (window.SquadProfile ? '<button class="h-me" data-h="profile" aria-label="Профиль">' + SquadProfile.avatarHtml() + '</button>' : '') + '</header>';
 
     // Моя волна
     h += '<div class="wave' + (wave && S.playing() ? ' live' : '') + '"><i class="b1"></i><i class="b2"></i><i class="b3"></i>' +
@@ -358,6 +312,7 @@
     if (h === 'wrap') { openWrap(el.dataset.m); return; }
     if (h === 'import') { openImport(); return; }
     if (h === 'rz') { openRecognize(); return; }
+    if (h === 'profile') { S.showTab('profile'); return; }
     if (h === 'wave') { if (wave && S.playing()) S.togglePlay(); else startWave(); }
     else if (h === 'liked') { likedList(); S.savePlaylists(); go('library'); S.openLib('playlists', LIKED); }
     else if (h === 'playlists') { go('library'); S.openLib('playlists'); }
@@ -687,81 +642,9 @@
 
   // ---------- Тексты песен (LRCLIB — открытая база, синхронизация по строкам) ----------
   const lyr = { open: false, key: null, lines: null, plain: '', raf: 0, cur: -1 };
-  const lyrCache = new Map();
-  function parseLrc(s) {
-    const out = [];
-    for (const line of String(s || '').split(/\r?\n/)) {
-      const tags = [...line.matchAll(/\[(\d+):(\d+(?:[.:]\d+)?)\]/g)];
-      if (!tags.length) continue;
-      const text = line.replace(/\[[^\]]*\]/g, '').trim();
-      for (const m of tags) out.push({ t: +m[1] * 60 + parseFloat(m[2].replace(':', '.')), text });
-    }
-    return out.sort((a, b) => a.t - b.t);
-  }
-  // Источники по очереди: кэш → теги файла → LRCLIB (точное совпадение, потом поиск) → lyrics.ovh.
-  // Кэш — IndexedDB (в localStorage тексты всей медиатеки не помещаются). Пустой результат помним 14 дней.
-  const LYR_NONE_TTL = 14 * 864e5;
-  const cleanTitle = (x) => String(x || '').replace(/\s*[([](?:official|lyric|lyrics|audio|video|hd|hq|clip|клип|prod\.?[^)\]]*|feat\.?[^)\]]*|ft\.?[^)\]]*)[^)\]]*[)\]]/ig, '').replace(/\s+-\s+(?:remaster(?:ed)?|live).*$/i, '').trim();
-  const realArtist = (t) => (t.artist && t.artist !== 'Неизвестный исполнитель' ? t.artist : '');
-  async function lyrSaved(key) {
-    if (lyrCache.has(key)) return lyrCache.get(key);
-    let r = await idb.get('lyr:' + key).catch(() => null);
-    if (!r) { // перенос старого кэша из localStorage
-      const old = ls.get('lyr:' + key, null);
-      if (old) { r = old; idb.set('lyr:' + key, old).catch(() => {}); try { localStorage.removeItem(LS + 'lyr:' + key); } catch (_) {} }
-    }
-    if (r && r.none && Date.now() - (r.at || 0) > LYR_NONE_TTL) r = null;
-    if (r) lyrCache.set(key, r);
-    return r || null;
-  }
-  function lyrStore(key, r) {
-    lyrCache.set(key, r);
-    idb.set('lyr:' + key, r).catch(() => {});
-  }
-  // «не найдено» (404) — нормальный ответ; прочие ошибки считаем, чтобы не запомнить «нет текста» из-за сбоя сети
-  const J = (url, net) => window.SquadOnline.json(url).catch((e) => { if (!/HTTP 4\d\d/.test(String(e && e.message))) net.fail++; return null; });
-  async function fromLrclib(t, d, net) {
-    const artist = realArtist(t), title = cleanTitle(t.title);
-    if (!title) return null;
-    const pick = (list) => {
-      list = (Array.isArray(list) ? list : [list]).filter((x) => x && (x.syncedLyrics || x.plainLyrics || x.instrumental));
-      const score = (x) => (x.syncedLyrics ? 0 : 30) + (d && x.duration ? Math.abs(x.duration - d) : 15) + (x.instrumental ? 100 : 0);
-      const best = list.sort((a, b) => score(a) - score(b))[0];
-      return best ? { synced: best.syncedLyrics || '', plain: best.plainLyrics || '', instrumental: !!best.instrumental, src: 'LRCLIB' } : null;
-    };
-    let r = null;
-    if (artist && d) r = pick(await J('https://lrclib.net/api/get?artist_name=' + encodeURIComponent(artist) + '&track_name=' + encodeURIComponent(title) + '&duration=' + Math.round(d), net));
-    if (!r && artist) r = pick(await J('https://lrclib.net/api/search?track_name=' + encodeURIComponent(title) + '&artist_name=' + encodeURIComponent(artist), net));
-    if (!r) r = pick(await J('https://lrclib.net/api/search?q=' + encodeURIComponent((artist + ' ' + title).trim()), net));
-    return r;
-  }
-  async function fromOvh(t, net) {
-    const artist = realArtist(t), title = cleanTitle(t.title);
-    if (!artist || !title) return null;
-    const j = await J('https://api.lyrics.ovh/v1/' + encodeURIComponent(artist) + '/' + encodeURIComponent(title), net);
-    const v = j && typeof j.lyrics === 'string' ? j.lyrics.replace(/\r/g, '').replace(/^Paroles de la chanson[^\n]*\n/i, '').trim() : '';
-    return v ? { synced: '', plain: v, src: 'lyrics.ovh' } : null;
-  }
-  // heavy — можно читать файл Android целиком (открыт текст текущего трека); online — разрешены сетевые базы
-  async function fetchLyrics(t, opts) {
-    const o = Object.assign({ heavy: true, online: true }, opts);
-    const saved = await lyrSaved(t.key);
-    if (saved) return saved;
-    let r = null;
-    try { const e = await S.embeddedLyrics(t, o.heavy); if (e) r = Object.assign(e, { src: 'теги файла' }); } catch (_) {}
-    if (!r && o.online) {
-      if (!window.SquadOnline || !window.SquadOnline.json) throw new Error('Нет сети');
-      if (!navigator.onLine) throw new Error('Нет сети');
-      const d = (S.cur() === t ? S.time().dur : 0) || t.duration || 0;
-      const net = { fail: 0 };
-      r = await fromLrclib(t, d, net) || await fromOvh(t, net);
-      if (!r && net.fail) throw new Error('Нет сети');
-    }
-    if (!r && !o.online) return null;
-    r = r || { none: true, at: Date.now() };
-    lyrStore(t.key, r);
-    return r;
-  }
+  // поиск и кэш текстов — общий модуль js/lyrics.js (ПК и телефон)
+  const L = window.SquadLyrics;
+  const parseLrc = L.parse, fetchLyrics = L.get;
 
   // Фоновая загрузка текстов для всей медиатеки (по одному запросу, без спешки)
   const lyrAuto = { on: ls.get('lyrAuto', true), run: false, done: 0, total: 0, found: 0 };
@@ -769,7 +652,7 @@
     if (lyrAuto.run || (!lyrAuto.on && !force)) return;
     lyrAuto.run = true;
     try {
-      const keys = new Set((await idb.keys().catch(() => [])).map(String));
+      const keys = new Set((await L.keys().catch(() => [])).map(String));
       const todo = S.tracks.filter((t) => t.title && !keys.has('lyr:' + t.key));
       Object.assign(lyrAuto, { done: 0, total: todo.length, found: 0 });
       lyrUI();
@@ -819,7 +702,7 @@
     lyrBody.addEventListener('click', (e) => {
       if (e.target.closest('[data-lyr="retry"]')) {
         const t = S.cur();
-        if (t) { lyrCache.delete(t.key); idb.del('lyr:' + t.key).catch(() => {}); loadLyrics(); }
+        if (t) { L.forget(t.key); loadLyrics(); }
         return;
       }
       const l = e.target.closest('[data-t]');
@@ -1940,6 +1823,7 @@
     if ($('menu').classList.contains('show')) { $('menu').classList.remove('show'); return; }
     if ($('update-panel') && $('update-panel').classList.contains('show')) { const c = $('up-close'); if (c) c.click(); return; }
     if (S.settings.tab === 'player') { closePlayer(); return; }
+    if (S.settings.tab === 'profile') { go('home'); return; }
     if (S.view.group && S.settings.tab === 'library') { S.openLib(S.view.tab); return; }
     if (dest !== 'home') { go('home'); return; }
     native('MusicScanner', 'minimize').catch(() => {});

@@ -1151,7 +1151,7 @@
     if (!$('panel-' + tab) && tab !== 'player') tab = 'library';
     settings.tab = tab;
     document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
-    ['home', 'library', 'eq', 'fx', 'themes'].forEach((p) => {
+    ['home', 'library', 'eq', 'fx', 'themes', 'profile'].forEach((p) => {
       if ($('panel-' + p)) $('panel-' + p).classList.toggle('hidden', tab !== p);
     });
     $('panel-player').classList.toggle('hidden-mobile', tab !== 'player');
