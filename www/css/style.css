@@ -736,3 +736,9 @@ html.desk .dl-head { padding-top: 40px; } /* под кнопками окна */
   html.desk .winctl { position: fixed; z-index: 1002; }
   html.desk .now { padding-top: 42px; }
 }
+
+/* Обложка всегда квадрат: во flex-колонке её сплющивало по высоте в низком окне. Размер подбираем под высоту окна */
+.now .cover { flex-shrink: 0; }
+@media (min-width: 821px) {
+  html:not(.apk) .now .cover { width: min(100%, max(160px, 100vh - 490px)); align-self: center; }
+}

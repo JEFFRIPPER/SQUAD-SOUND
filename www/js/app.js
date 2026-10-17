@@ -404,7 +404,15 @@
     renderT = setTimeout(() => { renderT = null; renderLib(); }, wait);
   }
 
+  // перерисовка того же списка (например, при смене трека) не должна кидать прокрутку наверх:
+  // innerHTML = '' на миг обнуляет высоту списка, и браузер сбрасывает scrollTop
   function renderLib() {
+    const panel = $('panel-library'), y = panel.scrollTop;
+    const same = view.tab + '\u0002' + view.group === renderLib.vkey;
+    renderList();
+    if (same && panel.scrollTop !== y) panel.scrollTop = y;
+  }
+  function renderList() {
     if (drag) { renderLib.pending = true; return; } // перерисовка посреди перетаскивания задвоит строки
     renderLib.pending = false;
     lastRender = Date.now();
@@ -416,7 +424,8 @@
     ol.innerHTML = '';
     // анимация появления строк — только при смене вкладки/группы, а не на каждую перерисовку
     const vkey = tab + '\u0002' + view.group;
-    ol.classList.toggle('md-enter', vkey !== renderLib.vkey);
+    const fresh = vkey !== renderLib.vkey;
+    ol.classList.toggle('md-enter', fresh);
     renderLib.vkey = vkey;
     document.querySelectorAll('#lib-tabs .chip').forEach((b) => b.classList.toggle('on', b.dataset.lib === tab));
     $('empty').classList.toggle('hidden', tracks.length > 0 || tab === 'playlists' || tab === 'telegram' || tab === 'online');
@@ -533,9 +542,10 @@
         '<div class="t-info"><div class="t-title">' + esc(t.title) + '</div><div class="t-artist">' +
         esc(t.artist + (t.album && tab !== 'albums' ? ' · ' + t.album : '')) + '</div></div>' + tail;
     });
-    // первый экран — сразу, остальное следующим кадром, чтобы переключение вкладок не подвисало
+    // первый экран — сразу, остальное следующим кадром, чтобы переключение вкладок не подвисало.
+    // Перерисовка того же списка (смена трека) — целиком сразу: иначе список на миг короче и прокрутку кидает наверх
     const gen = renderLib.gen = (renderLib.gen || 0) + 1;
-    const FIRST = 80;
+    const FIRST = fresh ? 80 : rows.length;
     ol.insertAdjacentHTML('beforeend', rows.slice(0, FIRST).join(''));
     if (rows.length > FIRST) setTimeout(() => { if (renderLib.gen === gen) ol.insertAdjacentHTML('beforeend', rows.slice(FIRST).join('')); }, 0);
     if (!items.length && (tracks.length || tab === 'telegram' || tab === 'online')) {
