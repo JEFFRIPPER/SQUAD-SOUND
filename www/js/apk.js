@@ -600,6 +600,7 @@
   function openMore() {
     const body = openSheet('Ещё', '<div class="sheet-list">' +
       '<button data-m="timer">' + svg(IC.timer) + 'Таймер сна</button>' +
+      '<button data-m="edit">' + svg(IC.lyrics) + 'Название, исполнитель, обложка</button>' +
       '<button data-m="cover">' + svg(IC.image) + 'Своя обложка</button>' +
       '<button data-m="queue">' + svg(IC.queue) + 'Очередь</button>' +
       '<button data-m="sound">' + svg(IC.sound) + 'Эквалайзер и эффекты целиком</button></div>');
@@ -609,6 +610,7 @@
       const k = b.dataset.m;
       if (k === 'timer') openTimer();
       else if (k === 'cover') openCoverSheet();
+      else if (k === 'edit') { closeSheet(); const t = S.cur(); if (t) S.editTrack(t.key); }
       else {
         closeSheet(); closePlayer();
         setTimeout(() => { if (k === 'queue') { go('library'); S.openLib('queue'); } else go('sound'); }, 0);

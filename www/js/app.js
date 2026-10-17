@@ -60,7 +60,7 @@
   const DEFAULT_FX = JSON.parse(JSON.stringify(engine.state));
   const settings = Object.assign({
     theme: 'squad', accent: null, coverAccent: false, shuffle: false, repeat: 'off', eqPreset: 'flat',
-    tab: 'library', libTab: 'tracks', sort: 'added', crossfade: 0, autoScan: true,
+    tab: 'library', libTab: 'tracks', sort: 'added', crossfade: 0, autoScan: true, netCovers: true,
   }, store.get('settings', {}));
   engine.load(store.get('fx', {}));
 
@@ -263,7 +263,14 @@
     return { mime: 'image/jpeg', data, url: r.data };
   }
 
+  // теги файла, поверх — правки пользователя (название, исполнитель, обложка из интернета)
   async function loadMeta(t) {
+    await loadTags(t);
+    const ed = await metaDb.get('edit:' + t.key);
+    if (ed) { t.netArt = !!ed.art; applyMeta(t, ed); }
+  }
+
+  async function loadTags(t) {
     const cached = await metaDb.get(t.key);
     if (cached && cached.v === META_VER) { applyMeta(t, cached); return; }
     const m = { v: META_VER };
@@ -315,6 +322,13 @@
     if (coverUrl) { URL.revokeObjectURL(coverUrl); coverUrl = null; }
     if (!t.thumb) return;
     try {
+      if (t.netArt) {
+        const ed = await metaDb.get('edit:' + t.key);
+        if (coverFor !== t.key || !ed || !ed.art) return;
+        coverUrl = URL.createObjectURL(new Blob([ed.art.data], { type: ed.art.mime }));
+        $('cover-img').src = coverUrl;
+        return;
+      }
       if (t.uri && scanner) {
         const art = await androidArt(t, 800);
         if (coverFor === t.key && art) $('cover-img').src = art.url;
@@ -740,6 +754,7 @@
       view.tab === 'queue' && it.pos !== qpos ? { label: 'Убрать из очереди', act: () => removeFromQueue(it.pos) } : null,
       t.artist && !(view.tab === 'artists' && view.group) ? { label: 'Исполнитель: ' + t.artist, act: () => openLib('artists', t.artist) } : null,
       albumKey && !(view.tab === 'albums' && view.group) ? { label: 'Альбом: ' + t.album, act: () => openLib('albums', albumKey) } : null,
+      { label: 'Название, исполнитель, обложка…', act: () => editTrack(t) },
       t.tg ? { label: 'Скачать на устройство', act: () => tgDownload(t) } : null,
       canDeleteFile(t) ? { label: 'Удалить с устройства', danger: true, act: () => deleteTrackFile(t.key) } : null,
       { label: 'Убрать из медиатеки', danger: !canDeleteFile(t), act: () => removeTrack(t.key) },
@@ -1795,6 +1810,210 @@
     });
   }
   // ---------- Мост для интерфейса APK (js/apk.js) ----------
+  // ---------- .exe: своя шапка окна ----------
+  if (native && native.win) {
+    document.documentElement.classList.add('desk');
+    $('winctl').addEventListener('click', (e) => { const b = e.target.closest('[data-win]'); if (b) native.win(b.dataset.win); });
+    native.onWinState((st) => {
+      document.documentElement.classList.toggle('win-max', !!(st.max || st.full));
+      $('winctl').querySelector('[data-win="max"]').title = st.max || st.full ? 'Свернуть в окно' : 'Развернуть';
+    });
+  }
+
+  // ---------- Название, исполнитель и обложка: правка вручную и поиск в интернете ----------
+  // Каталоги: Deezer (основной) и iTunes Search — без ключей. Правки лежат в IndexedDB «edit:<ключ>» поверх тегов файла.
+  const netAndroid = isAndroid && cap && cap.nativePromise;
+  async function netText(url) {
+    if (native) return native.httpGet(url);
+    if (netAndroid) {
+      const r = await cap.nativePromise('SquadMedia', 'get', { url });
+      if (!r || r.status >= 400) throw new Error('HTTP ' + (r ? r.status : '?'));
+      return r.body;
+    }
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.text();
+  }
+  async function netImage(url) {
+    let data;
+    if (native) data = new Uint8Array(await native.httpGet(url, true));
+    else if (netAndroid) {
+      const r = await cap.nativePromise('SquadMedia', 'image', { url });
+      if (!r || r.status >= 400 || !r.body) throw new Error('HTTP ' + (r ? r.status : '?'));
+      const bin = atob(r.body);
+      data = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) data[i] = bin.charCodeAt(i);
+    } else data = new Uint8Array(await (await fetch(url)).arrayBuffer());
+    return { mime: data[0] === 0x89 ? 'image/png' : 'image/jpeg', data };
+  }
+  const mNorm = (x) => String(x || '').toLowerCase().replace(/ё/g, 'е').replace(/\s*[([{][^)\]}]*[)\]}]/g, ' ').replace(/\s+(feat|ft)\.?\s.*$/i, '')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const realArtist = (a) => (a && a !== 'Неизвестный исполнитель' ? a : '');
+  // → [{title, artist, album, art, small}]
+  async function lookupMeta(q) {
+    const out = [];
+    const dz = netText('https://api.deezer.com/search?limit=10&q=' + encodeURIComponent(q)).then((x) => {
+      (JSON.parse(x).data || []).forEach((r) => r.album && out.push({ title: r.title, artist: r.artist && r.artist.name, album: r.album.title,
+        art: r.album.cover_xl || r.album.cover_big, small: r.album.cover_medium || r.album.cover, src: 'Deezer' }));
+    });
+    const it = netText('https://itunes.apple.com/search?media=music&entity=song&limit=8&term=' + encodeURIComponent(q)).then((x) => {
+      (JSON.parse(x).results || []).forEach((r) => r.artworkUrl100 && out.push({ title: r.trackName, artist: r.artistName, album: r.collectionName,
+        art: r.artworkUrl100.replace(/\/\d+x\d+bb\./, '/600x600bb.'), small: r.artworkUrl100, src: 'iTunes' }));
+    });
+    const res = await Promise.allSettled([dz, it]);
+    if (!out.length && res.every((r) => r.status === 'rejected')) throw res[0].reason;
+    const seen = new Set();
+    return out.filter((r) => { const k = mNorm(r.artist) + '|' + mNorm(r.title) + '|' + mNorm(r.album); if (seen.has(k)) return false; seen.add(k); return true; });
+  }
+  // насколько найденное похоже на трек (для автоматических обложек: только уверенные совпадения)
+  function metaScore(r, title, artist) {
+    const tt = mNorm(r.title), want = mNorm(title);
+    let s = tt === want ? 2 : want && tt && (tt.includes(want) || want.includes(tt)) ? 1 : 0;
+    if (!s) return 0;
+    const aw = mNorm(artist).split(' ').filter((w) => w.length > 1), have = new Set(mNorm(r.artist).split(' '));
+    const hit = aw.filter((w) => have.has(w)).length;
+    return aw.length ? (hit ? s + hit / aw.length : 0) : s;
+  }
+  async function saveEdit(t, patch) {
+    const ed = Object.assign((await metaDb.get('edit:' + t.key)) || {}, patch);
+    await metaDb.put('edit:' + t.key, ed);
+    t.netArt = !!ed.art;
+    if (t === curTrack()) coverFor = null; // перерисовать полную обложку
+    applyMeta(t, ed);
+    scheduleRender();
+    return ed;
+  }
+  async function artPatch(url) {
+    const img = await netImage(url);
+    const ci = await SquadTags.coverInfo(img);
+    if (!ci) throw new Error('Не удалось открыть картинку');
+    return Object.assign(ci, { art: img, netMiss: 0 });
+  }
+  // .exe: файл переименован → новый путь = новый ключ; переносим его везде, где хранятся ключи
+  async function rekey(t, to) {
+    const old = t.key;
+    if (to === old) return;
+    const m = await metaDb.get(old);
+    if (m) await metaDb.put(to, m);
+    const ed = await metaDb.get('edit:' + old);
+    if (ed) await metaDb.put('edit:' + to, ed);
+    byKey.delete(old);
+    Object.assign(t, { key: to, path: to, name: to.split(/[\\/]/).pop() });
+    byKey.set(to, t);
+    const fix = (a) => a.forEach((k, i) => { if (k === old) a[i] = to; });
+    fix(queue); fix(context);
+    playlists.forEach((p) => fix(p.keys));
+    savePlaylists(); saveLibrary();
+    if (settings.lastPath === old) { settings.lastPath = to; saveSettings(); }
+    if (pre && pre.key === old) pre = null;
+    decks.forEach((d) => { if (d.dataset.key === old) d.dataset.key = to; });
+  }
+
+  let editWrap = null;
+  function editTrack(t) {
+    if (!editWrap) {
+      editWrap = document.createElement('div');
+      editWrap.className = 'dialog-wrap';
+      document.body.appendChild(editWrap);
+    }
+    const canRename = !!(native && native.renameFile && t.path);
+    editWrap.innerHTML = '<div class="dialog ed-dlg"><h3>Название и исполнитель</h3>' +
+      '<label class="ed-f"><span>Название</span><input class="search" id="ed-title" maxlength="200"></label>' +
+      '<label class="ed-f"><span>Исполнитель</span><input class="search" id="ed-artist" maxlength="200"></label>' +
+      '<label class="ed-f"><span>Альбом</span><input class="search" id="ed-album" maxlength="200"></label>' +
+      '<button class="btn" id="ed-find">Найти в интернете</button><p class="hint ed-msg"></p><div class="ed-res"></div>' +
+      (canRename ? '<label class="switch"><input type="checkbox" id="ed-ren" checked><span></span>Переименовать файл: «Исполнитель - Название»</label>' : '') +
+      '<div class="row"><button class="btn ghost" id="ed-cancel">Отмена</button><button class="btn primary" id="ed-ok">Сохранить</button></div></div>';
+    const q = (id) => editWrap.querySelector('#' + id);
+    q('ed-title').value = t.title || '';
+    q('ed-artist').value = realArtist(t.artist);
+    q('ed-album').value = t.album || '';
+    let pick = null, busy = false;
+    const msg = editWrap.querySelector('.ed-msg'), list = editWrap.querySelector('.ed-res');
+    const close = () => editWrap.classList.remove('show');
+    editWrap.onclick = (e) => { if (e.target === editWrap) close(); };
+    q('ed-cancel').onclick = close;
+    q('ed-find').onclick = async () => {
+      const qs = (q('ed-artist').value + ' ' + q('ed-title').value).trim() || t.name.replace(/\.[^.]+$/, '');
+      msg.textContent = 'Ищу…'; list.innerHTML = '';
+      try {
+        const res = await lookupMeta(qs);
+        msg.textContent = res.length ? 'Выберите подходящий вариант — подставятся название, исполнитель, альбом и обложка' : 'Ничего не нашлось. Поправьте название и поищите ещё раз.';
+        res.slice(0, 12).forEach((r) => {
+          const b = document.createElement('button');
+          b.className = 'ed-item';
+          b.innerHTML = '<img alt="" referrerpolicy="no-referrer"><span><b></b><small></small></span>';
+          b.querySelector('img').src = r.small;
+          b.querySelector('b').textContent = r.title;
+          b.querySelector('small').textContent = r.artist + (r.album ? ' · ' + r.album : '') + ' · ' + r.src;
+          b.onclick = () => {
+            pick = r;
+            list.querySelectorAll('.ed-item').forEach((x) => x.classList.toggle('on', x === b));
+            q('ed-title').value = r.title || ''; q('ed-artist').value = r.artist || ''; q('ed-album').value = r.album || '';
+          };
+          list.appendChild(b);
+        });
+      } catch (e) { msg.textContent = 'Сервисы недоступны: ' + (e.message || e); }
+    };
+    q('ed-ok').onclick = async () => {
+      if (busy) return;
+      const title = q('ed-title').value.trim(), artist = q('ed-artist').value.trim(), album = q('ed-album').value.trim();
+      if (!title) { msg.textContent = 'Название не может быть пустым'; return; }
+      busy = true; msg.textContent = 'Сохраняю…';
+      try {
+        const patch = { title, artist: artist || 'Неизвестный исполнитель', album };
+        if (pick && pick.art) Object.assign(patch, await artPatch(pick.art).catch(() => ({})));
+        if (canRename && q('ed-ren').checked) {
+          const to = await native.renameFile(t.path, (artist ? artist + ' - ' : '') + title);
+          await rekey(t, to);
+        }
+        await saveEdit(t, patch);
+        close(); renderLib(); toast('Сохранено');
+      } catch (e) { msg.textContent = 'Не получилось: ' + (e.message || e); } finally { busy = false; }
+    };
+    editWrap.classList.add('show');
+    setTimeout(() => q('ed-title').focus(), 30);
+  }
+
+  // Обложка из интернета для трека без обложки: только уверенное совпадение, неудачу помним 14 дней
+  const NET_MISS_TTL = 14 * 864e5;
+  async function autoCover(t, force) {
+    if (!t || t.web || (!settings.netCovers && !force)) return false;
+    if (!t.metaDone) await loadMeta(t);
+    if (t.thumb || !realArtist(t.artist) || !t.title) return false;
+    const ed = await metaDb.get('edit:' + t.key);
+    if (ed && ed.netMiss && Date.now() - ed.netMiss < NET_MISS_TTL) return false;
+    let best = null, bs = 0;
+    try {
+      for (const r of await lookupMeta(t.artist + ' ' + t.title)) { const sc = metaScore(r, t.title, t.artist); if (sc > bs) { bs = sc; best = r; } }
+    } catch (_) { return false; } // нет сети — попробуем в другой раз
+    if (!best || bs < 2 || !best.art) { await saveEdit(t, { netMiss: Date.now() }); return false; }
+    try { await saveEdit(t, await artPatch(best.art)); return true; } catch (_) { return false; }
+  }
+  appEvents.addEventListener('track', () => { const t = curTrack(); if (t) setTimeout(() => { if (curTrack() === t) autoCover(t); }, 1500); });
+  let coversRun = false;
+  async function findAllCovers() {
+    if (coversRun) { coversRun = false; return; } // повторное нажатие — стоп
+    const list = tracks.filter((t) => !t.thumb && !t.web);
+    if (!list.length) { toast('У всех треков уже есть обложки'); return; }
+    coversRun = true;
+    let ok = 0, i = 0;
+    $('btn-net-covers').textContent = 'Остановить поиск';
+    for (const t of list) {
+      if (!coversRun) break;
+      i++;
+      if (await autoCover(t, true)) ok++;
+      if (i % 5 === 0) $('net-covers-st').textContent = 'Проверено ' + i + ' из ' + list.length + ', найдено ' + ok;
+      await new Promise((r) => setTimeout(r, 350));
+    }
+    coversRun = false;
+    $('btn-net-covers').textContent = 'Найти обложки для всей медиатеки';
+    $('net-covers-st').textContent = 'Готово: найдено ' + ok + ' из ' + list.length;
+  }
+  $('net-covers').checked = settings.netCovers;
+  $('net-covers').onchange = (e) => { settings.netCovers = e.target.checked; saveSettings(); };
+  $('btn-net-covers').onclick = findAllCovers;
+
   window.SquadApp = {
     get tracks() { return tracks; },
     get playlists() { return playlists; },
@@ -1847,6 +2066,7 @@
     upNext() { const p = nextPos(true); return p >= 0 && p !== qpos ? byKey.get(queue[p]) || null : null; },
     togglePlay, step, showTab, openLib, toast, fmt, esc, renderLib, savePlaylists, enqueue, playNext,
     webSearch: (q) => webSearch(q),
+    editTrack: (key) => { const t = byKey.get(key); if (t) editTrack(t); },
     addTg: async (res, partKb) => (await tgAdd(res, null, partKb)).key,
     on: (type, cb) => appEvents.addEventListener(type, cb),
   };
