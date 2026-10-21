@@ -336,6 +336,22 @@
     }
   }
 
+  // Полноразмерная обложка: blob:/data: адрес или null (blob: освобождает вызывающий)
+  async function fullArt(t) {
+    if (!t.thumb) return null;
+    if (t.netArt) {
+      const ed = await metaDb.get('edit:' + t.key);
+      return ed && ed.art ? URL.createObjectURL(new Blob([ed.art.data], { type: ed.art.mime })) : null;
+    }
+    if (t.uri && scanner) {
+      const art = await androidArt(t, 800);
+      return art ? art.url : null;
+    }
+    const src = await sourceOf(t);
+    const tags = src ? await SquadTags.read(src) : {};
+    return tags.picture ? URL.createObjectURL(new Blob([tags.picture.data], { type: tags.picture.mime })) : null;
+  }
+
   // Полноразмерная обложка для экрана «Сейчас играет»
   let coverUrl = null, coverFor = null;
   async function loadFullCover(t) {
@@ -344,23 +360,11 @@
     if (coverUrl) { URL.revokeObjectURL(coverUrl); coverUrl = null; }
     if (!t.thumb) return;
     try {
-      if (t.netArt) {
-        const ed = await metaDb.get('edit:' + t.key);
-        if (coverFor !== t.key || !ed || !ed.art) return;
-        coverUrl = URL.createObjectURL(new Blob([ed.art.data], { type: ed.art.mime }));
-        $('cover-img').src = coverUrl;
-        return;
-      }
-      if (t.uri && scanner) {
-        const art = await androidArt(t, 800);
-        if (coverFor === t.key && art) $('cover-img').src = art.url;
-        return;
-      }
-      const src = await sourceOf(t);
-      const tags = src ? await SquadTags.read(src) : {};
-      if (coverFor !== t.key || !tags.picture) return;
-      coverUrl = URL.createObjectURL(new Blob([tags.picture.data], { type: tags.picture.mime }));
-      $('cover-img').src = coverUrl;
+      const u = await fullArt(t);
+      if (!u) return;
+      if (coverFor !== t.key) { if (u.startsWith('blob:')) URL.revokeObjectURL(u); return; }
+      if (u.startsWith('blob:')) coverUrl = u;
+      $('cover-img').src = u;
     } catch (_) {}
   }
 
@@ -795,6 +799,7 @@
       t.artist && !(view.tab === 'artists' && view.group) ? { label: 'Исполнитель: ' + t.artist, act: () => openLib('artists', t.artist) } : null,
       albumKey && !(view.tab === 'albums' && view.group) ? { label: 'Альбом: ' + t.album, act: () => openLib('albums', albumKey) } : null,
       { label: 'Название, исполнитель, обложка…', act: () => editTrack(t) },
+      window.SquadShare ? { label: 'Поделиться картинкой…', act: () => SquadShare.open(t, 'card') } : null,
       t.tg ? { label: 'Скачать на устройство', act: () => tgDownload(t) } : null,
       canDeleteFile(t) ? { label: 'Удалить с устройства', danger: true, act: () => deleteTrackFile(t.key) } : null,
       { label: 'Убрать из медиатеки', danger: !canDeleteFile(t), act: () => removeTrack(t.key) },
@@ -1018,6 +1023,7 @@
       fading = false;
       await p;
       skipped = 0;
+      emitApp('start'); // трек реально заиграл в активной деке (share.js: «Слушать вместе»)
     } catch (e) {
       if (token !== playToken || (e && e.name === 'AbortError')) return;
       console.error(e);
@@ -2350,6 +2356,12 @@
     rate: () => A().playbackRate || 1,
     item: (i) => items[i] || null,
     sound: () => JSON.parse(JSON.stringify(engine.state)),
+    // большая обложка трека: { url, own } — own: blob, который вызывающий освобождает сам
+    async art(t) {
+      if (coverFor === t.key && t === curTrack()) { const u = $('cover-img').src; if (u && !/squad-logo/.test(u)) return { url: u, own: false }; }
+      try { const u = await fullArt(t); if (u) return { url: u, own: u.startsWith('blob:') }; } catch (_) {}
+      return t.thumb ? { url: t.thumb, own: false } : null;
+    },
     // Текст песни из тегов файла. heavy — разрешить читать файл Android целиком (только для одного трека)
     async embeddedLyrics(t, heavy) {
       let src = null;

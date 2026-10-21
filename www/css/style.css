@@ -1057,3 +1057,49 @@ html.desk .winctl button { width: 40px; height: 30px; border-radius: 10px; }
 @media (max-width: 480px) { .sf-grid { grid-template-columns: 1fr; } }
 .smart-count { margin: 10px 0; }
 html.desk .smart-wrap { -webkit-app-region: no-drag; }
+/* Итоги на ПК: история карточкой посередине окна, вокруг затемнение */
+html:not(.apk) .wrap-back.show { display: block; position: fixed; inset: 0; z-index: 940; background: rgb(0 0 0 / .72); animation: dl-in .2s ease; }
+html:not(.apk) .wrap-ov.show { display: flex; flex-direction: column; position: fixed; z-index: 950; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: min(440px, calc(100vw - 32px)); height: min(800px, calc(100vh - 56px)); border-radius: 32px; overflow: hidden; color: #fff; padding: 18px 26px 26px;
+  background: radial-gradient(120% 80% at 20% 10%, hsl(var(--wh, 350) 85% 45%), transparent 60%),
+    radial-gradient(100% 70% at 90% 90%, hsl(calc(var(--wh, 350) + 60) 80% 35%), transparent 60%), #0b0507;
+  box-shadow: 0 40px 120px -20px rgb(0 0 0 / .8); cursor: pointer; user-select: none; }
+html:not(.apk) .wrap-ov .w-x { top: 26px; cursor: pointer; }
+html:not(.apk) .wrap-ov .w-huge { font-size: 88px; }
+html:not(.apk) .wrap-ov .w-cover { width: 240px; }
+html:not(.apk) .wrap-ov .w-acts .btn { cursor: pointer; }
+.wrap-ov, .wrap-back { -webkit-app-region: no-drag; }
+.dh-wraps { display: flex; gap: 12px; flex-wrap: wrap; }
+.dh-wrap { position: relative; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; width: 220px; height: 120px; padding: 16px 18px; border: 0; border-radius: 24px;
+  color: #fff; text-align: left; font: inherit; cursor: pointer; overflow: hidden;
+  background: linear-gradient(130deg, var(--accent), color-mix(in srgb, var(--accent2) 70%, #3a0a6e)); transition: transform .2s; }
+.dh-wrap:nth-child(2) { background: linear-gradient(130deg, #6a2cff, color-mix(in srgb, var(--accent) 60%, #1a0630)); }
+.dh-wrap:nth-child(3) { background: linear-gradient(130deg, #ff8a00, color-mix(in srgb, var(--accent) 70%, #3a0a00)); }
+.dh-wrap:hover { transform: translateY(-2px); }
+.dh-wrap svg { position: absolute; top: 14px; left: 16px; width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
+.dh-wrap b { font-size: 17px; }
+.dh-wrap b::first-letter { text-transform: uppercase; }
+.dh-wrap small { opacity: .85; font-size: 12px; }
+/* «Поделиться»: картинка трека и «Слушать вместе» */
+.share-dlg { width: min(460px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; }
+.share-dlg h3 { margin: 0 0 12px; }
+.sh-seg { display: flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; margin: 0 0 14px; }
+.sh-seg button { flex: 1; min-height: 38px; border: 0; background: none; color: var(--text); font-weight: 600; font-size: 14px; padding: 0 8px; }
+.sh-seg button + button { border-left: 1px solid var(--line); }
+.sh-seg button.on { background: var(--accent); color: var(--on-accent); }
+.sh-seg button:disabled { opacity: .4; }
+.sh-pane[hidden] { display: none; }
+.sh-prev { position: relative; width: min(240px, 60%); aspect-ratio: 9 / 16; margin: 0 auto 14px; border-radius: 16px; overflow: hidden;
+  background: var(--md-container-highest, var(--bg)); box-shadow: 0 10px 30px rgba(0,0,0,.35); }
+.sh-prev img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.sh-prev img:not([src]) { visibility: hidden; }
+.sh-busy { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 14px; }
+.sh-busy[hidden] { display: none; }
+.sh-line { margin-bottom: 14px; }
+.sh-acts { justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.sh-acts .btn[hidden] { display: none; }
+.sh-acts .btn:disabled { opacity: .45; }
+.sh-tg-hint { margin: 0 0 12px; }
+.sf.sh-join { margin-bottom: 10px; }
+.sf.sh-join textarea.search { height: auto; min-height: 84px; padding: 10px 14px; resize: none; font: inherit; font-size: 13px; line-height: 1.4; }
+html.desk .share-wrap { -webkit-app-region: no-drag; }

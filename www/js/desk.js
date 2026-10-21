@@ -301,6 +301,16 @@
       '<b>' + esc(t.title) + '</b><small>' + esc(t.artist || '') + '</small></button>';
   }).join('') + '</div></section>' : '';
   const lists = {};
+  // итоги месяца и года (js/wrapped.js) — плитками на главной
+  function wrapRow() {
+    const W = window.SquadWrapped;
+    if (!W) return '';
+    const { months, years } = W.list();
+    const ks = months.slice(0, 2).concat(years.slice(0, 1));
+    return ks.length ? '<section class="dh-sec"><h2>Итоги</h2><div class="dh-wraps">' + ks.map((k) => '<button class="dh-wrap" data-wrap="' + esc(k) + '">' +
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>' +
+      '<b>' + esc(W.monthName(k)) + '</b><small>' + (k.length === 4 ? 'Итоги года' : 'Итоги месяца') + '</small></button>').join('') + '</div></section>' : '';
+  }
   function render() {
     if (S.settings.tab !== 'home' || root.classList.contains('apk')) return;
     const P = window.SquadProfile, cur = S.cur();
@@ -324,15 +334,16 @@
         const t = S.byKey(k);
         return '<button class="dh-tile" data-k="' + esc(k) + '" data-from="recent">' + art(t, 'dh-tart') + '<span><b>' + esc(t.title) + '</b><small>' + esc(t.artist || '') + '</small></span></button>';
       }).join('') + '</div>' : '<div class="dh-empty"><p>Медиатека пуста. Добавьте музыку во вкладке «Треки».</p><button class="btn primary" data-act="lib">Открыть треки</button></div>') +
-      row('Сейчас слушаешь', recent.slice(5), 'recent') + row('Чаще всего', top, 'top') + row('Вернуться к', old, 'old') + row('Новое в медиатеке', fresh, 'fresh') +
+      wrapRow() + row('Сейчас слушаешь', recent.slice(5), 'recent') + row('Чаще всего', top, 'top') + row('Вернуться к', old, 'old') + row('Новое в медиатеке', fresh, 'fresh') +
       (S.playlists.filter((p) => p.id !== 'liked' && p.keys.length).length ? '<section class="dh-sec"><h2>Плейлисты</h2><div class="dh-row">' +
         S.playlists.filter((p) => p.id !== 'liked' && p.keys.length).map((p) => '<button class="dh-card" data-pl="' + esc(p.id) + '">' + art(S.byKey(p.keys.find((k) => S.byKey(k))), 'dh-art') +
           '<b>' + esc(p.name) + '</b><small>' + p.keys.length + ' тр.</small></button>').join('') + '</div></section>' : '') +
       '</div>';
   }
   home.addEventListener('click', (e) => {
-    const el = e.target.closest('[data-k],[data-mood],[data-act],[data-pl]');
+    const el = e.target.closest('[data-k],[data-mood],[data-act],[data-pl],[data-wrap]');
     if (!el) return;
+    if (el.dataset.wrap) { window.SquadWrapped.open(el.dataset.wrap); return; }
     if (el.dataset.mood) { mood = el.dataset.mood; try { localStorage.setItem('squad.desk.mood', mood); } catch (_) {} render(); return; }
     if (el.dataset.pl) { S.openLib('playlists', el.dataset.pl); return; }
     const act = el.dataset.act;

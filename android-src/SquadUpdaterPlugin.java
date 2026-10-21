@@ -3,10 +3,12 @@ package com.squad.sound;
 // Обновление APK внутри приложения: скачать новую версию из GitHub Releases в кэш
 // и открыть системный установщик. Из JS: Capacitor.nativePromise('SquadUpdater', ...).
 
+import android.content.ClipData;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
+import android.util.Base64;
 import androidx.core.content.FileProvider;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -142,5 +144,37 @@ public class SquadUpdaterPlugin extends Plugin {
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         getContext().startActivity(i);
         call.resolve();
+    }
+
+    // «Поделиться»: текст и/или картинка (JPEG в base64) через системное окно выбора приложения
+    @PluginMethod
+    public void share(PluginCall call) {
+        String text = call.getString("text", "");
+        String data = call.getString("data", "");
+        String title = call.getString("title", "Поделиться");
+        try {
+            Intent i = new Intent(Intent.ACTION_SEND);
+            if (data != null && !data.isEmpty()) {
+                if (data.length() > 20 * 1024 * 1024) { call.reject("Картинка слишком большая"); return; }
+                File dir = new File(getContext().getCacheDir(), "share");
+                if (!dir.exists() && !dir.mkdirs()) { call.reject("Нет места для картинки"); return; }
+                File f = new File(dir, "squad-sound-card.jpg");
+                try (FileOutputStream out = new FileOutputStream(f)) { out.write(Base64.decode(data, Base64.DEFAULT)); }
+                Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", f);
+                i.setType("image/jpeg");
+                i.putExtra(Intent.EXTRA_STREAM, uri);
+                i.setClipData(ClipData.newRawUri("", uri));
+                i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } else {
+                i.setType("text/plain");
+            }
+            if (text != null && !text.isEmpty()) i.putExtra(Intent.EXTRA_TEXT, text);
+            Intent c = Intent.createChooser(i, title);
+            c.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            getContext().startActivity(c);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("Не удалось поделиться: " + e.getMessage());
+        }
     }
 }
