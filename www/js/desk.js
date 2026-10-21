@@ -5,7 +5,8 @@
   'use strict';
   const root = document.documentElement;
   const S = window.SquadApp, L = window.SquadLyrics;
-  if (root.classList.contains('apk') || !S || !L) return;
+  if (!S || !L) return;
+  const APK = root.classList.contains('apk'); // на телефоне отсюда нужен только плеер на весь экран с текстом
 
   const $ = (id) => document.getElementById(id);
   const esc = S.esc;
@@ -29,14 +30,14 @@
   const bKara = document.createElement('button');
   bKara.className = 'chip dk-chip';
   bKara.innerHTML = svg(IC.mic) + 'Караоке';
-  acts.append(bLyr, bKara);
+  if (!APK) acts.append(bLyr, bKara);
 
   // ---------- Плеер на всё окно: обложка и кнопки слева, текст справа ----------
   const ov = document.createElement('div');
   ov.className = 'dl';
   ov.innerHTML = '<div class="dl-bg"></div><i class="dl-tint"></i><header class="dl-head"><img class="dl-art" alt=""><div class="dl-meta"><b></b><span></span></div>' +
-    '<div class="dl-off" title="Сдвиг текста для этого трека"><button data-off="-1" title="Текст позже">−0,1</button><span>0,0 с</span><button data-off="1" title="Текст раньше">+0,1</button></div>' +
-    '<button class="chip dl-kara">' + svg(IC.mic) + '<span>Караоке</span></button>' +
+    '<div class="dl-tools"><div class="dl-off" title="Сдвиг текста для этого трека"><button data-off="-1" title="Текст позже">−0,1</button><span>0,0 с</span><button data-off="1" title="Текст раньше">+0,1</button></div>' +
+    '<button class="chip dl-kara">' + svg(IC.mic) + '<span>Караоке</span></button></div>' +
     '<button class="icon-btn dl-close" title="Закрыть (Esc)">' + svg(IC.close) + '</button></header>' +
     '<div class="dl-main"><aside class="dl-side"><div class="dl-cover"><img alt=""></div><div class="dl-np"><b></b><span></span></div>' +
     '<div class="dl-seek"><input type="range" min="0" max="1000" value="0"><div><span>0:00</span><span>0:00</span></div></div>' +
@@ -195,6 +196,15 @@
     st.raf = requestAnimationFrame(loop);
   }
   S.on('track', () => { if (st.open && (S.cur() || {}).key !== st.key) load(); });
+
+  // в узком окне и на телефоне сдвиг и «Караоке» уходят вниз, к кнопкам
+  const tools = ov.querySelector('.dl-tools'), mqWide = matchMedia('(min-width: 1000px)');
+  const placeTools = () => { if (mqWide.matches) ov.querySelector('.dl-close').before(tools); else ov.querySelector('.dl-seek').before(tools); };
+  placeTools();
+  mqWide.addEventListener('change', placeTools);
+
+  window.SquadFull = { open, close, isOpen: () => st.open };
+  if (APK) return;
 
   // клик по обложке или названию в нижнем плеере — текст на всё окно
   document.querySelector('.now .cover').addEventListener('click', () => { if (matchMedia('(min-width: 821px)').matches) open(false); });

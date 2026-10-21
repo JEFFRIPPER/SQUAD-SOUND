@@ -87,6 +87,16 @@ html.apk-search #search { min-height: 52px; border-radius: 28px; font-size: 16px
 .h-ct { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .h-ca { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+.h-quick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 18px; }
+.h-q { display: flex; align-items: center; gap: 10px; min-width: 0; height: 56px; padding: 0 10px 0 0; border: 0; border-radius: 14px; overflow: hidden;
+  text-align: left; color: var(--text); background: var(--md-container-high); }
+.h-q:active { background: var(--md-container-highest); }
+.h-q .h-art, .h-qa { width: 56px; height: 56px; border-radius: 0; flex-shrink: 0; display: grid; place-items: center; }
+.h-qa.liked { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: var(--on-accent); }
+.h-qa svg { width: 26px; height: 26px; fill: currentColor; stroke: none; }
+.h-q > span:last-child { display: flex; flex-direction: column; min-width: 0; }
+.h-q b { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.h-q small { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .h-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .h-tile { display: flex; align-items: center; gap: 12px; text-align: left; border: 0; border-radius: 20px; padding: 14px; min-height: 64px;
   background: var(--md-container-high); color: var(--text); position: relative; overflow: hidden; }
@@ -349,3 +359,4 @@ html.apk #panel-profile .pf-hero { flex-direction: column; text-align: center; }
 html.apk #panel-profile .pf-name { text-align: center; }
 html.apk #panel-profile .pf-lv { justify-content: center; }
 html.apk #panel-profile .pf-stats { grid-template-columns: repeat(2, 1fr); }
+html.apk #panel-themes > .set-off { display: none !important; }
