@@ -1,5 +1,5 @@
 // SQUAD SOUND — оболочка Electron для Windows (.exe)
-const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, Tray, Menu, nativeImage, globalShortcut } = require('electron');
 const { pathToFileURL } = require('url');
 const path = require('path');
 const fs = require('fs');
@@ -13,8 +13,11 @@ protocol.registerSchemesAsPrivileged([
 
 const AUDIO_RE = /\.(mp3|flac|wav|ogg|oga|m4a|aac|opus|webm|mp4)$/i;
 
+let mainWin = null;
+let quitting = false; // настоящий выход (меню трея, обновление), а не «закрыть в трей»
+
 function createWindow() {
-  const win = new BrowserWindow({
+  const win = mainWin = new BrowserWindow({
     width: 1200,
     height: 800,
     minWidth: 380,
@@ -40,6 +43,11 @@ function createWindow() {
   // Наружу открываем только https, а уйти со страницы приложения окну нельзя (squadNative не должен достаться чужой странице)
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https:\/\//.test(url)) shell.openExternal(url); return { action: 'deny' }; });
   win.webContents.on('will-navigate', (e, url) => { if (!url.startsWith('app://squad/')) e.preventDefault(); });
+  // «Закрыть в трей»: окно прячется, музыка играет дальше
+  win.on('close', (e) => { if (cfg.tray && tray && !quitting) { e.preventDefault(); win.hide(); } });
+  win.on('closed', () => { mainWin = null; app.quit(); });
+  win.once('ready-to-show', updateThumbar);
+  win.on('show', updateThumbar);
 }
 
 // ---------- Автопоиск музыки по компьютеру ----------
@@ -199,6 +207,20 @@ ipcMain.handle('rename-file', async (_e, p, base) => {
   return to;
 });
 
+// Перетащенные в окно папки раскрываем в список аудиофайлов
+ipcMain.handle('expand-paths', async (_e, paths) => {
+  const list = (Array.isArray(paths) ? paths : []).filter((p) => typeof p === 'string' && path.isAbsolute(p));
+  const out = [];
+  for (const p of list) {
+    let st;
+    try { st = await fs.promises.stat(p); } catch (_) { continue; }
+    if (st.isDirectory()) out.push(...await collectAudio([p], 0));
+    else if (st.isFile() && AUDIO_RE.test(p)) out.push(p);
+    if (out.length >= MAX_FILES) break;
+  }
+  return out.slice(0, MAX_FILES);
+});
+
 ipcMain.on('win', (e, act) => {
   const w = BrowserWindow.fromWebContents(e.sender);
   if (!w) return;
@@ -212,6 +234,223 @@ ipcMain.handle('version', () => app.getVersion());
 ipcMain.handle('open-external', (_e, url) => {
   if (/^https:\/\/github\.com\/JEFFRIPPER\/SQUAD-SOUND\//.test(url) || url === 'https://t.me/THKC_SQUAD') shell.openExternal(url);
 });
+
+// ---------- Управление плеером снаружи окна: трей, кнопки в превью панели задач, горячие клавиши, мини-плеер, Discord ----------
+// Окно присылает состояние плеера (player-state), а команды из трея/превью/мини-плеера уходят ему же (player-cmd).
+const ICONS = path.join(__dirname, 'icons');
+const icon = (n) => nativeImage.createFromPath(path.join(ICONS, n + '.png'));
+let cfg = { tray: false, hotkeys: true, discord: '' };
+let pstate = { has: false, title: '', artist: '', playing: false, cur: 0, dur: 0, rate: 1, thumb: '', at: 0, theme: null };
+let tray = null, miniWin = null;
+const CMDS = new Set(['toggle', 'next', 'prev', 'volUp', 'volDown', 'seek']);
+
+function showMain() {
+  if (!mainWin) return;
+  if (!mainWin.isVisible()) mainWin.show();
+  if (mainWin.isMinimized()) mainWin.restore();
+  mainWin.focus();
+}
+function playerCmd(c, v) {
+  if (CMDS.has(c) && mainWin) mainWin.webContents.send('player-cmd', c, typeof v === 'number' && isFinite(v) ? v : 0);
+}
+
+function updateThumbar() {
+  if (process.platform !== 'win32' || !mainWin || mainWin.isDestroyed()) return;
+  const off = pstate.has ? [] : ['disabled'];
+  try {
+    mainWin.setThumbarButtons([
+      { tooltip: 'Предыдущий', icon: icon('prev'), flags: off, click: () => playerCmd('prev') },
+      { tooltip: pstate.playing ? 'Пауза' : 'Играть', icon: icon(pstate.playing ? 'pause' : 'play'), flags: off, click: () => playerCmd('toggle') },
+      { tooltip: 'Следующий', icon: icon('next'), flags: off, click: () => playerCmd('next') },
+    ]);
+  } catch (_) {}
+}
+
+const trackLine = () => (pstate.has ? (pstate.artist ? pstate.artist + ' — ' : '') + pstate.title : 'Ничего не играет');
+function updateTray() {
+  if (!tray) return;
+  tray.setToolTip(('SQUAD SOUND\n' + trackLine()).slice(0, 127)); // Windows обрезает подсказку трея до 127 символов
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: trackLine().slice(0, 60), enabled: false },
+    { type: 'separator' },
+    { label: pstate.playing ? 'Пауза' : 'Играть', enabled: pstate.has, click: () => playerCmd('toggle') },
+    { label: 'Следующий', enabled: pstate.has, click: () => playerCmd('next') },
+    { label: 'Предыдущий', enabled: pstate.has, click: () => playerCmd('prev') },
+    { type: 'separator' },
+    { label: 'Мини-плеер', click: openMini },
+    { label: 'Открыть SQUAD SOUND', click: showMain },
+    { type: 'separator' },
+    { label: 'Выход', click: () => { quitting = true; app.quit(); } },
+  ]));
+}
+function createTray() {
+  try {
+    tray = new Tray(nativeImage.createFromPath(path.join(__dirname, '..', 'build', 'icon.png')).resize({ width: 32, height: 32 }));
+  } catch (e) { console.error(e); tray = null; return; }
+  tray.on('click', showMain);
+  updateTray();
+}
+
+// Глобальные горячие клавиши работают, даже когда окно свёрнуто или в трее. Занятые другой программой сочетания пропускаем.
+const HOTKEYS = [['Control+Alt+Space', 'toggle'], ['Control+Alt+Right', 'next'], ['Control+Alt+Left', 'prev'], ['Control+Alt+Up', 'volUp'], ['Control+Alt+Down', 'volDown']];
+function applyHotkeys() {
+  globalShortcut.unregisterAll();
+  if (!cfg.hotkeys) return [];
+  const busy = [];
+  for (const [acc, c] of HOTKEYS) {
+    let ok = false;
+    try { ok = globalShortcut.register(acc, () => playerCmd(c)); } catch (_) {}
+    if (!ok) busy.push(acc);
+  }
+  return busy;
+}
+
+// Мини-плеер: маленькое окно поверх всех окон
+let miniPos = null;
+function openMini() {
+  if (miniWin) { miniWin.show(); miniWin.focus(); return; }
+  const { screen } = require('electron');
+  const wa = screen.getPrimaryDisplay().workArea;
+  const W = 360, H = 104;
+  const pos = miniPos || { x: wa.x + wa.width - W - 24, y: wa.y + wa.height - H - 24 };
+  miniWin = new BrowserWindow({
+    width: W, height: H, x: pos.x, y: pos.y, frame: false, transparent: true, backgroundColor: '#00000000',
+    resizable: false, maximizable: false, minimizable: false, fullscreenable: false, skipTaskbar: true, alwaysOnTop: true,
+    title: 'SQUAD SOUND — мини-плеер', icon: path.join(__dirname, '..', 'build', 'icon.png'), show: false,
+    webPreferences: { preload: path.join(__dirname, 'preload-mini.js'), contextIsolation: true, nodeIntegration: false },
+  });
+  miniWin.setAlwaysOnTop(true, 'floating');
+  miniWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  miniWin.webContents.on('will-navigate', (e) => e.preventDefault());
+  miniWin.loadURL('app://squad/mini.html');
+  miniWin.once('ready-to-show', () => { sendMini(); miniWin.showInactive(); });
+  miniWin.on('moved', () => { if (miniWin) { const [x, y] = miniWin.getPosition(); miniPos = { x, y }; } });
+  miniWin.on('closed', () => { miniWin = null; });
+}
+function sendMini() { if (miniWin && !miniWin.isDestroyed()) miniWin.webContents.send('mini-state', pstate); }
+ipcMain.on('mini-cmd', (e, c, v) => {
+  if (!miniWin || e.sender !== miniWin.webContents) return;
+  if (c === 'close') miniWin.close();
+  else if (c === 'show') showMain();
+  else playerCmd(c, v);
+});
+
+// ---------- Discord Rich Presence: свой маленький клиент локального IPC Discord ----------
+// Нужен ID приложения пользователя с discord.com/developers. Discord принимает не больше 5 обновлений за 20 секунд.
+const discord = (() => {
+  const sockNet = require('net');
+  let id = '', sock = null, ready = false, buf = Buffer.alloc(0), retryT = null, flushT = null, last = 0, nonce = 0;
+  let want = null, sent = 'none', lvl = 0; // lvl: 1 — без «Слушает», 2 — ещё и без картинки по ссылке (старый Discord)
+  const pipe = (i) => (process.platform === 'win32' ? '\\\\?\\pipe\\discord-ipc-' + i
+    : path.join(process.env.XDG_RUNTIME_DIR || process.env.TMPDIR || '/tmp', 'discord-ipc-' + i));
+  const write = (op, obj) => {
+    if (!sock) return;
+    const body = Buffer.from(JSON.stringify(obj));
+    const head = Buffer.alloc(8);
+    head.writeInt32LE(op, 0); head.writeInt32LE(body.length, 4);
+    sock.write(Buffer.concat([head, body]));
+  };
+  function retry() { clearTimeout(retryT); if (id) retryT = setTimeout(() => connect(0), 20000); }
+  function connect(i) {
+    if (!id || sock) return;
+    const s = sockNet.createConnection(pipe(i));
+    let opened = false;
+    sock = s;
+    s.on('connect', () => { opened = true; write(0, { v: 1, client_id: id }); });
+    s.on('data', (d) => {
+      buf = Buffer.concat([buf, d]);
+      while (buf.length >= 8) {
+        const op = buf.readInt32LE(0), len = buf.readInt32LE(4);
+        if (buf.length < 8 + len) break;
+        let msg = null;
+        try { msg = JSON.parse(buf.subarray(8, 8 + len).toString()); } catch (_) {}
+        buf = buf.subarray(8 + len);
+        onMsg(op, msg || {});
+      }
+    });
+    s.on('error', () => {});
+    s.on('close', () => {
+      if (sock !== s) return;
+      sock = null; ready = false; buf = Buffer.alloc(0); sent = 'none';
+      if (!opened && i < 9) connect(i + 1); else retry();
+    });
+  }
+  function onMsg(op, msg) {
+    if (op === 3) { write(4, msg); return; } // ping → pong
+    if (op === 2) { if (sock) sock.destroy(); return; } // Discord закрыл: неверный ID приложения и т. п.
+    if (msg.evt === 'READY') { ready = true; flush(); return; }
+    if (msg.evt === 'ERROR' && msg.cmd === 'SET_ACTIVITY' && lvl < 2) { lvl++; sent = 'none'; flush(); }
+  }
+  function flush() {
+    clearTimeout(flushT);
+    if (!ready) return;
+    const key = JSON.stringify(want);
+    if (key === sent) return;
+    const wait = last + 4500 - Date.now();
+    if (wait > 0) { flushT = setTimeout(flush, wait); return; }
+    last = Date.now(); sent = key;
+    const activity = want && Object.assign({}, want);
+    if (activity && lvl > 0) delete activity.type;
+    if (activity && lvl > 1) activity.assets = { large_image: 'squad', large_text: 'SQUAD SOUND' };
+    write(1, { cmd: 'SET_ACTIVITY', args: activity ? { pid: process.pid, activity } : { pid: process.pid }, nonce: String(++nonce) });
+  }
+  function stop() { clearTimeout(retryT); clearTimeout(flushT); if (sock) { const s = sock; sock = null; ready = false; s.destroy(); } }
+  return {
+    setId(v) {
+      v = /^\d{15,22}$/.test(v || '') ? v : '';
+      if (v === id) return;
+      stop(); id = v; lvl = 0; sent = 'none';
+      if (id) connect(0);
+    },
+    set(a) { want = a; flush(); },
+    stop,
+  };
+})();
+const clip = (s, n) => { s = String(s || '').trim().slice(0, n); return s.length < 2 ? (s + '⠀⠀').slice(0, 2) : s; };
+let lastStart = 0, clearT = null;
+function updateDiscord() {
+  if (cfg.discord && pstate.has && !pstate.playing) { // пауза между треками длится миг — статус убираем, только если пауза настоящая
+    if (!clearT) clearT = setTimeout(() => { clearT = null; lastStart = 0; discord.set(null); }, 2000);
+    return;
+  }
+  clearTimeout(clearT); clearT = null;
+  if (!cfg.discord || !pstate.has || !pstate.dur) { lastStart = 0; discord.set(null); return; }
+  const rate = pstate.rate || 1;
+  let start = Math.round(pstate.at - (pstate.cur / rate) * 1000);
+  if (Math.abs(start - lastStart) < 3000) start = lastStart; // мелкий дрейф времени не повод слать обновление
+  lastStart = start;
+  const a = {
+    type: 2, details: clip(pstate.title, 128), state: clip(pstate.artist || 'SQUAD SOUND', 128),
+    timestamps: { start, end: Math.round(start + (pstate.dur / rate) * 1000) },
+    assets: { large_image: /^https:\/\//.test(pstate.thumb) && pstate.thumb.length < 256 ? pstate.thumb : 'squad', large_text: 'SQUAD SOUND' },
+  };
+  discord.set(a);
+}
+
+const str = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
+const num = (v) => (typeof v === 'number' && isFinite(v) && v >= 0 ? v : 0);
+ipcMain.on('player-state', (e, st) => {
+  if (!mainWin || e.sender !== mainWin.webContents || !st || typeof st !== 'object') return;
+  const prev = pstate;
+  pstate = {
+    has: !!st.has, title: str(st.title, 300), artist: str(st.artist, 300), playing: !!st.playing,
+    cur: num(st.cur), dur: num(st.dur), rate: num(st.rate) || 1, thumb: st.thumb === undefined ? prev.thumb : str(st.thumb, 400000), at: Date.now(),
+    theme: st.theme && typeof st.theme === 'object' ? { accent: str(st.theme.accent, 40), bg: str(st.theme.bg, 40), text: str(st.theme.text, 40) } : prev.theme,
+  };
+  if (prev.playing !== pstate.playing || prev.has !== pstate.has) updateThumbar();
+  if (prev.playing !== pstate.playing || prev.has !== pstate.has || prev.title !== pstate.title || prev.artist !== pstate.artist) updateTray();
+  sendMini();
+  updateDiscord();
+});
+ipcMain.handle('native-cfg', (e, c) => {
+  if (!mainWin || e.sender !== mainWin.webContents || !c || typeof c !== 'object') return {};
+  cfg = { tray: !!c.tray, hotkeys: c.hotkeys !== false, discord: str(c.discord, 30).trim() };
+  const busy = applyHotkeys();
+  discord.setId(cfg.discord);
+  updateDiscord();
+  return { busy };
+});
+ipcMain.on('open-mini', (e) => { if (mainWin && e.sender === mainWin.webContents) openMini(); });
 
 // ---------- Автообновление (GitHub Releases) ----------
 // portable-версия не умеет обновляться сама: для неё страница предлагает скачать новый файл.
@@ -244,15 +483,12 @@ ipcMain.handle('update-check', () => {
   manualCheck = true;
   return autoUpdater.checkForUpdates().then(() => {}).catch(() => {});
 });
-ipcMain.handle('update-install', () => { if (autoUpdater) autoUpdater.quitAndInstall(true, true); }); // тихо и сразу запустить
+ipcMain.handle('update-install', () => { if (autoUpdater) { quitting = true; autoUpdater.quitAndInstall(true, true); } }); // тихо и сразу запустить
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
-    const w = BrowserWindow.getAllWindows()[0];
-    if (w) { if (w.isMinimized()) w.restore(); w.focus(); }
-  });
+  app.on('second-instance', showMain);
   app.whenReady().then(() => {
     protocol.handle('app', (req) => {
       const rel = decodeURIComponent(new URL(req.url).pathname).replace(/^\/+/, '');
@@ -261,7 +497,10 @@ if (!app.requestSingleInstanceLock()) {
       return net.fetch(pathToFileURL(file).toString());
     });
     createWindow();
+    createTray();
     setupAutoUpdate();
   });
+  app.on('before-quit', () => { quitting = true; });
+  app.on('will-quit', () => { globalShortcut.unregisterAll(); discord.stop(); });
   app.on('window-all-closed', () => app.quit());
 }

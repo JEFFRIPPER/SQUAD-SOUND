@@ -973,3 +973,8 @@ html.desk .winctl button { width: 40px; height: 30px; border-radius: 10px; }
 .dset-box { border-radius: 28px; }
 .dset-nav button { border-radius: 999px; padding: 11px 16px; }
 @media (min-width: 1000px) { .dl-cover { border-radius: 28px; } }
+/* раздел «Компьютер» в настройках .exe */
+.dset-pc .row { margin: 10px 0 4px; }
+.dset-pc #pc-dc-id { max-width: 340px; }
+.dset-pc .pc-keys { margin-top: 6px; }
+.dset-pc .pc-busy kbd { opacity: .45; text-decoration: line-through; }

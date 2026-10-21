@@ -19,6 +19,7 @@
     fx: 'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z',
     look: 'M12 3a9 9 0 1 0 0 18c1 0 1.5-.8 1.5-1.5 0-1.2-1-1.5-1-2.5 0-.8.7-1.5 1.5-1.5H16a5 5 0 0 0 5-5c0-4.1-4-7.5-9-7.5z',
     keys: 'M3 7h18v10H3zM7 11h.01M11 11h.01M15 11h.01M8 14h8',
+    pc: 'M3 4h18v12H3zM8 20h8M12 16v4',
     gear: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z',
   };
 
@@ -303,6 +304,8 @@
   // Панели переносятся в окно на время показа и возвращаются на место при закрытии.
   const wide = () => matchMedia('(min-width: 821px)').matches;
   const SECS = [['eq', 'Эквалайзер', IC.eq], ['fx', 'Эффекты', IC.fx], ['themes', 'Внешний вид', IC.look], ['keys', 'Клавиши', IC.keys]];
+  const PC = !!(window.squadNative && window.squadNative.playerState); // раздел «Компьютер» заполняет js/native.js
+  if (PC) SECS.push(['pc', 'Компьютер', IC.pc]);
   const gear = document.createElement('button');
   gear.className = 'tab dk-gear';
   gear.dataset.label = 'Настройки';
@@ -315,7 +318,8 @@
     '</nav><div class="dset-body"><header class="dset-top"><h3></h3><button class="icon-btn" data-x title="Закрыть (Esc)">' + svg(IC.close) + '</button></header>' +
     '<section class="panel dset-keys" id="dset-keys">' +
     [['Пробел', 'Пауза / играть'], ['← / →', 'Перемотка на 5 секунд'], ['Ctrl + ← / →', 'Предыдущий / следующий трек'], ['Esc', 'Закрыть окно, текст или меню']]
-      .map(([k, d]) => '<div class="dset-key"><span>' + d + '</span><kbd>' + k + '</kbd></div>').join('') + '</section></div></div>';
+      .map(([k, d]) => '<div class="dset-key"><span>' + d + '</span><kbd>' + k + '</kbd></div>').join('') + '</section>' +
+    (PC ? '<section class="panel dset-pc" id="dset-pc"></section>' : '') + '</div></div>';
   document.body.appendChild(md);
   const mbody = md.querySelector('.dset-body');
   const homes = ['themes', 'fx', 'eq'].map((id) => { const el = $('panel-' + id); return [el, el.nextElementSibling]; }); // порядок важен для возврата

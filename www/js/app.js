@@ -1142,6 +1142,10 @@
     const files = Array.from(e.dataTransfer.files || []);
     if (native && native.pathForFile) {
       const paths = files.map((f) => native.pathForFile(f)).filter(Boolean);
+      if (paths.length && native.expandPaths) { // папки раскрываем в треки
+        native.expandPaths(paths).then((list) => (list.length ? addPaths(list) : toast('Здесь нет музыки'))).catch(() => addPaths(paths));
+        return;
+      }
       if (paths.length) { addPaths(paths); return; }
     }
     addFiles(files);
