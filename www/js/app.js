@@ -799,7 +799,7 @@
       t.artist && !(view.tab === 'artists' && view.group) ? { label: 'Исполнитель: ' + t.artist, act: () => openLib('artists', t.artist) } : null,
       albumKey && !(view.tab === 'albums' && view.group) ? { label: 'Альбом: ' + t.album, act: () => openLib('albums', albumKey) } : null,
       { label: 'Название, исполнитель, обложка…', act: () => editTrack(t) },
-      window.SquadShare ? { label: 'Поделиться картинкой…', act: () => SquadShare.open(t, 'card') } : null,
+      window.SquadShare ? { label: 'Поделиться картинкой…', act: () => SquadShare.open(t) } : null,
       t.tg ? { label: 'Скачать на устройство', act: () => tgDownload(t) } : null,
       canDeleteFile(t) ? { label: 'Удалить с устройства', danger: true, act: () => deleteTrackFile(t.key) } : null,
       { label: 'Убрать из медиатеки', danger: !canDeleteFile(t), act: () => removeTrack(t.key) },
@@ -1023,7 +1023,6 @@
       fading = false;
       await p;
       skipped = 0;
-      emitApp('start'); // трек реально заиграл в активной деке (share.js: «Слушать вместе»)
     } catch (e) {
       if (token !== playToken || (e && e.name === 'AbortError')) return;
       console.error(e);

@@ -1,14 +1,10 @@
-/* SQUAD SOUND — «Поделиться»: картинка-карточка трека для сторис и Telegram и «Слушать вместе».
+/* SQUAD SOUND — «Поделиться»: картинка-карточка трека для сторис и Telegram.
  * Карточка рисуется на canvas (1080×1920): обложка, название, исполнитель и строка текста на выбор.
- * «Слушать вместе» — приглашение с кодом: в нём трек, позиция и время отправки. Друг вставляет его,
- * плеер находит этот трек у себя (или ищет онлайн) и включает с того же места. Синхронизируется только старт:
- * общего сервера нет, дальше каждый слушает сам.
  */
 (function () {
   'use strict';
   const S = window.SquadApp;
   if (!S) return;
-  const $ = (id) => document.getElementById(id);
   const esc = S.esc;
   const cap = window.Capacitor;
   const android = !!(cap && cap.getPlatform && cap.getPlatform() === 'android' && cap.nativePromise);
@@ -20,17 +16,7 @@
   async function nativeShare(text, blob) {
     await cap.nativePromise('SquadUpdater', 'share', { text: text || '', data: blob ? await blobB64(blob) : '', title: 'Поделиться' });
   }
-  const webShare = (o) => !android && !desk && navigator.share && (!o.files || (navigator.canShare && navigator.canShare(o)));
-  async function copyText(s) {
-    try { await navigator.clipboard.writeText(s); return true; } catch (_) {}
-    const ta = document.createElement('textarea');
-    ta.value = s; ta.style.cssText = 'position:fixed;opacity:0;top:0';
-    document.body.appendChild(ta); ta.select();
-    let ok = false;
-    try { ok = document.execCommand('copy'); } catch (_) {}
-    ta.remove();
-    return ok;
-  }
+  const webShare = (o) => !android && !desk && navigator.share && navigator.canShare && navigator.canShare(o);
   function download(blob, name) {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = name;
@@ -156,39 +142,17 @@
   const wrap = document.createElement('div');
   wrap.className = 'dialog-wrap share-wrap';
   wrap.innerHTML = '<div class="dialog share-dlg" role="dialog" aria-modal="true"><h3>Поделиться</h3>' +
-    '<div class="sh-seg"><button data-tab="card">Картинка</button><button data-tab="together">Слушать вместе</button></div>' +
-    '<div class="sh-pane" data-pane="card"><div class="sh-prev"><img alt="Карточка трека"><span class="sh-busy">Рисую…</span></div>' +
+    '<div class="sh-pane"><div class="sh-prev"><img alt="Карточка трека"><span class="sh-busy">Рисую…</span></div>' +
       '<label class="sf sh-line"><span>Строка из текста песни</span><select class="select"></select></label>' +
       '<div class="row sh-acts"><button class="btn" data-a="save">Сохранить</button><button class="btn" data-a="copy">Копировать</button><button class="btn primary" data-a="share">Поделиться</button></div></div>' +
-    '<div class="sh-pane" data-pane="together"><p class="hint sh-tg-hint"></p>' +
-      '<div class="row sh-acts"><button class="btn" data-a="inv-copy">Копировать</button><button class="btn primary" data-a="invite">Пригласить друга</button></div>' +
-      '<label class="sf sh-join"><span>Приглашение от друга</span><textarea class="search" rows="3" placeholder="Вставьте сюда сообщение с кодом SQ1…" spellcheck="false"></textarea></label>' +
-      '<div class="row sh-acts"><button class="btn" data-a="paste">Вставить</button><button class="btn primary" data-a="join">Присоединиться</button></div></div>' +
     '<div class="row"><button class="btn ghost" data-x>Закрыть</button></div></div>';
   document.body.appendChild(wrap);
   const prev = wrap.querySelector('.sh-prev img'), busyEl = wrap.querySelector('.sh-busy'), sel = wrap.querySelector('.sh-line select');
-  const joinTa = wrap.querySelector('.sh-join textarea');
   const btn = (a) => wrap.querySelector('[data-a="' + a + '"]');
   if (android) { btn('save').hidden = true; btn('copy').hidden = true; }
   if (desk) btn('share').hidden = true; // на ПК «Сохранить» и «Копировать» — системного «Поделиться» нет
   if (!android && !(window.ClipboardItem && navigator.clipboard && navigator.clipboard.write)) btn('copy').hidden = true;
-  const st = { t: null, img: null, own: null, canvas: null, job: 0, tab: 'card' };
-
-  function setTab(tab) {
-    st.tab = tab;
-    wrap.querySelectorAll('.sh-seg button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
-    wrap.querySelectorAll('.sh-pane').forEach((p) => { p.hidden = p.dataset.pane !== tab; });
-    if (tab === 'together') syncTogether();
-  }
-  function syncTogether() {
-    const t = S.cur();
-    wrap.querySelector('.sh-tg-hint').textContent = t
-      ? 'Отправьте другу приглашение на «' + (t.artist ? t.artist + ' — ' : '') + t.title + '». Он вставит его в SQUAD SOUND, и трек включится у него с того же места, где сейчас у вас.'
-      : 'Включите трек, чтобы пригласить друга. А если приглашение прислали вам, вставьте его ниже.';
-    btn('invite').disabled = btn('inv-copy').disabled = !t;
-    btn('inv-copy').hidden = android;
-    btn('invite').textContent = android || webShare({ text: 'x' }) ? 'Пригласить друга' : 'Отправить в Telegram';
-  }
+  const st = { t: null, img: null, own: null, canvas: null, job: 0 };
 
   async function lyricLines(t) {
     if (!window.SquadLyrics) return { lines: [], cur: '' };
@@ -225,15 +189,12 @@
     }
   }
 
-  async function open(t, tab) {
+  async function open(t) {
     t = t || S.cur();
+    if (!t) { S.toast('Сначала включите трек'); return; }
     close();
     st.t = t; st.canvas = null; prev.removeAttribute('src');
-    joinTa.value = '';
-    wrap.querySelector('.sh-seg [data-tab="card"]').disabled = !t;
-    setTab(t && tab !== 'together' ? 'card' : 'together');
     wrap.classList.add('show');
-    if (!t) return;
     const job = ++st.job;
     busyEl.hidden = false;
     sel.innerHTML = '<option value="">Без текста</option>';
@@ -282,135 +243,22 @@
     }
   }
 
-  // ---------- Слушать вместе ----------
-  const PFX = 'SQ1.';
-  const b64e = (s) => { const u = new TextEncoder().encode(s); let b = ''; u.forEach((x) => { b += String.fromCharCode(x); }); return btoa(b).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); };
-  const b64d = (s) => { const b = atob(s.replace(/-/g, '+').replace(/_/g, '/')); return new TextDecoder().decode(Uint8Array.from(b, (ch) => ch.charCodeAt(0))); };
-  function inviteText() {
-    const t = S.cur();
-    if (!t) return null;
-    const tm = S.time();
-    const d = { t: t.title || '', a: t.artist && t.artist !== 'Неизвестный исполнитель' ? t.artist : '', p: Math.round((tm.cur || 0) * 10) / 10,
-      d: Math.round(tm.dur || t.duration || 0), at: Date.now(), r: S.rate(), s: S.playing() ? 1 : 0 };
-    return '🎧 Слушаем вместе в SQUAD SOUND: ' + (d.a ? d.a + ' — ' : '') + d.t + '\n' +
-      'Вставь это сообщение в SQUAD SOUND в окне «Слушать вместе», и трек включится с того же места.\n' + PFX + b64e(JSON.stringify(d));
-  }
-  function parseInvite(s) {
-    const m = String(s || '').match(/SQ1\.([A-Za-z0-9_+/=-]{8,})/);
-    if (!m) return null;
-    try {
-      const d = JSON.parse(b64d(m[1]));
-      if (!d || typeof d.t !== 'string' || !d.t || !isFinite(d.p) || !isFinite(d.at)) return null;
-      return { t: d.t.slice(0, 300), a: String(d.a || '').slice(0, 300), p: Math.max(0, +d.p), d: Math.max(0, +d.d || 0), at: +d.at, r: Math.min(4, Math.max(0.25, +d.r || 1)), s: d.s !== 0 };
-    } catch (_) { return null; }
-  }
-  // название без «(feat. …)», «[Remastered]» и знаков — чтобы «Song (Official Audio)» совпало с «Song»
-  const norm = (s) => String(s || '').toLowerCase().replace(/ё/g, 'е').replace(/\s*[([][^)\]]*[)\]]/g, ' ').replace(/\b(feat|ft)\.?\s.*$/, ' ')
-    .replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
-  function findTrack(d) {
-    const nt = norm(d.t), na = norm(d.a);
-    if (!nt) return null;
-    let best = null, bs = 0;
-    for (const t of S.tracks) {
-      if (norm(t.title) !== nt) continue;
-      const ta = norm(t.artist);
-      const sc = !na ? 2 : ta === na ? 3 : ta && (ta.includes(na) || na.includes(ta)) ? 2 : ta === norm('Неизвестный исполнитель') || !ta ? 1 : 0;
-      if (sc > bs) { best = t; bs = sc; }
-    }
-    return best;
-  }
-  // позиция друга сейчас; если он ставил паузу — та же точка
-  const posNow = (d) => d.p + (d.s ? Math.max(0, (Date.now() - d.at) / 1000) * d.r : 0);
-  const fmtPos = (s) => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
-  function syncTo(d) {
-    const dur = S.time().dur || d.d;
-    const pos = posNow(d);
-    if (dur && pos > dur - 2) { S.toast('У друга этот трек уже доиграл, включаю с начала'); return; }
-    S.seek(pos);
-    if (!S.playing()) S.togglePlay();
-    S.toast('Слушаете вместе с ' + fmtPos(pos));
-  }
-  // ждём, пока трек заиграет (свой — сразу, найденный онлайн — когда его включат), и перематываем
-  let pending = null; // { d, key | null, until }
-  S.on('start', () => {
-    const pd = pending, t = S.cur();
-    if (!pd || !t) return;
-    if (Date.now() > pd.until) { pending = null; return; }
-    if (pd.key ? t.key !== pd.key : norm(t.title) !== norm(pd.d.t)) return;
-    pending = null;
-    syncTo(pd.d);
-  });
-  function join(text) {
-    const d = parseInvite(text);
-    if (!d) { S.toast('Не вижу кода приглашения: нужна строка, которая начинается с SQ1.'); return false; }
-    const t = findTrack(d);
-    close();
-    if (t) {
-      const cur = S.cur();
-      if (cur && cur.key === t.key && S.time().dur > 0) { pending = null; syncTo(d); return true; }
-      pending = { d, key: t.key, until: Date.now() + 5 * 60e3 };
-      S.play([t.key], 0, false);
-      return true;
-    }
-    pending = { d, key: null, until: Date.now() + 15 * 60e3 };
-    const q = (d.a ? d.a + ' ' : '') + d.t;
-    S.toast('«' + d.t + '» нет в медиатеке, ищу онлайн. Включите найденный трек, и он встанет на место друга');
-    if (window.SquadApkGo) { SquadApkGo('search'); setTimeout(() => $('search').blur(), 150); }
-    S.openLib('online');
-    $('search').value = q;
-    S.webSearch(q);
-    return true;
-  }
-
-  async function invite(copyOnly) {
-    const s = inviteText();
-    if (!s) return;
-    try {
-      if (!copyOnly && android) { await nativeShare(s, null); return; }
-      if (!copyOnly && webShare({ text: s })) { await navigator.share({ text: s }); return; }
-      const ok = await copyText(s);
-      if (copyOnly) { S.toast(ok ? 'Приглашение скопировано' : 'Не получилось скопировать'); return; }
-      // ПК: Telegram откроет выбор чата, текст уже вставлен
-      window.open('https://t.me/share/url?url=' + encodeURIComponent(s.split('\n').pop()) + '&text=' + encodeURIComponent(s.split('\n').slice(0, -1).join('\n')), '_blank', 'noopener');
-      S.toast(ok ? 'Открываю Telegram. Приглашение ещё и скопировано' : 'Открываю Telegram');
-    } catch (e) {
-      if (e && e.name === 'AbortError') return;
-      console.warn('Приглашение:', e);
-      S.toast('Не получилось отправить приглашение');
-    }
-  }
-
   wrap.addEventListener('click', async (e) => {
     if (e.target === wrap || e.target.closest('[data-x]')) { close(); return; }
-    const tb = e.target.closest('[data-tab]');
-    if (tb) { setTab(tb.dataset.tab); return; }
     const b = e.target.closest('[data-a]');
-    if (!b || b.disabled) return;
-    const a = b.dataset.a;
-    if (a === 'invite' || a === 'inv-copy') invite(a === 'inv-copy');
-    else if (a === 'paste') { try { joinTa.value = await navigator.clipboard.readText(); } catch (_) { S.toast('Вставьте долгим нажатием в поле'); joinTa.focus(); } }
-    else if (a === 'join') join(joinTa.value);
-    else act(a);
+    if (b && !b.disabled) act(b.dataset.a);
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && close()) { e.stopImmediatePropagation(); e.preventDefault(); } }, true);
-  // ПК: Ctrl+V с приглашением в любом месте окна (не в поле ввода)
-  document.addEventListener('paste', (e) => {
-    const el = e.target;
-    if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
-    const s = e.clipboardData && e.clipboardData.getData('text');
-    if (s && parseInvite(s)) { e.preventDefault(); join(s); }
-  });
-
   // ---------- Кнопка в плеере на ПК ----------
   const acts = document.querySelector('.np-actions');
   if (acts && !document.documentElement.classList.contains('apk')) {
     const b = document.createElement('button');
     b.className = 'chip dk-chip';
-    b.title = 'Картинка трека или «Слушать вместе»';
+    b.title = 'Картинка трека для сторис и Telegram';
     b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 22a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg>Поделиться';
     b.onclick = () => open(S.cur());
     acts.appendChild(b);
   }
 
-  window.SquadShare = { open, close, join, isOpen: () => wrap.classList.contains('show'), parseInvite, inviteText };
+  window.SquadShare = { open, close, isOpen: () => wrap.classList.contains('show') };
 })();
