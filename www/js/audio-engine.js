@@ -93,6 +93,7 @@ registerProcessor('squad-pitch', SquadPitch);
       // На телефоне свёртка 2,5-секундного реверба и worklet даже «на нуле» съедают поток звука —
       // при нагрузке (загрузки Telegram) он не успевает и в наушниках слышны щелчки.
       this.lean = false;
+      this.fadeMul = 1; // затухание таймера сна поверх громкости
       this.ctx = null;
       this.ready = null;
       this.state = {
@@ -123,10 +124,18 @@ registerProcessor('squad-pitch', SquadPitch);
 
 
       n.input = ctx.createGain();
+      // На каждой деке: кроссфейд (deckGain) → выравнивание громкости трека (deckNorm). deckAn слушает трек
+      // до всей обработки — по нему меряем громкость самой записи.
+      n.deckNorm = []; n.deckAn = [];
       n.deckGain = this.decks.map((el, i) => {
         const g = ctx.createGain();
         g.gain.value = i === this.active ? 1 : 0;
-        ctx.createMediaElementSource(el).connect(g).connect(n.input);
+        const norm = ctx.createGain(), an = ctx.createAnalyser();
+        an.fftSize = 2048;
+        const src = ctx.createMediaElementSource(el);
+        src.connect(g).connect(norm).connect(n.input);
+        src.connect(an);
+        n.deckNorm.push(norm); n.deckAn.push(an);
         return g;
       });
 
@@ -220,6 +229,41 @@ registerProcessor('squad-pitch', SquadPitch);
       this._lastIr = null;
       this.applyAll();
       return this;
+    }
+
+    // Общее затухание (таймер сна): mul 0..1 за seconds секунд, громкость пользователя не трогаем
+    fadeTo(mul, seconds) {
+      this.fadeMul = mul;
+      const n = this.nodes;
+      if (!n || !seconds) { this._fading = false; this.apply('volume'); return; }
+      const p = n.master.gain, t = this.ctx.currentTime;
+      p.cancelScheduledValues(t);
+      p.setValueAtTime(p.value, t);
+      p.linearRampToValueAtTime(this.state.volume * this.state.volume * mul, t + seconds);
+      this._fading = true;
+      clearTimeout(this._fadeT);
+      this._fadeT = setTimeout(() => { this._fading = false; }, seconds * 1000 + 50);
+    }
+
+    // Усиление трека на деке i (выравнивание громкости); seconds — плавно
+    setNorm(i, gain, seconds) {
+      const n = this.nodes;
+      if (!n || !n.deckNorm[i]) return;
+      const p = n.deckNorm[i].gain, t = this.ctx.currentTime;
+      p.cancelScheduledValues(t);
+      if (seconds) p.setTargetAtTime(gain, t, seconds / 3); else p.setValueAtTime(gain, t);
+    }
+
+    // Средний квадрат сигнала деки i за последние ~40 мс (громкость самой записи), -1 — нет Web Audio
+    level(i) {
+      const n = this.nodes;
+      if (!n || !n.deckAn[i]) return -1;
+      const an = n.deckAn[i];
+      const b = this._lv || (this._lv = new Float32Array(an.fftSize));
+      an.getFloatTimeDomainData(b);
+      let sum = 0;
+      for (let k = 0; k < b.length; k++) sum += b[k] * b[k];
+      return sum / b.length;
     }
 
     get audio() { return this.decks[this.active]; }
@@ -360,10 +404,12 @@ registerProcessor('squad-pitch', SquadPitch);
           }
           break;
         }
-        case 'volume':
-          if (n) { decks.forEach((a) => { a.volume = 1; }); smooth(n.master.gain, s.volume * s.volume); }
-          else decks.forEach((a) => { a.volume = s.volume * s.volume; });
+        case 'volume': {
+          const v = s.volume * s.volume * this.fadeMul;
+          if (n) { decks.forEach((a) => { a.volume = 1; }); if (!this._fading) smooth(n.master.gain, v); }
+          else decks.forEach((a) => { a.volume = v; });
           break;
+        }
         case 'eq': case 'eqOn': case 'preamp':
           if (!n) break;
           smooth(n.preamp.gain, Math.pow(10, (s.eqOn ? s.preamp : 0) / 20));

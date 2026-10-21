@@ -102,7 +102,86 @@
   }
 
 
+  // ---------- Перевод и латиница под строками ----------
+  // Перевод (и латиница для японского, корейского и т. п.) — бесплатный публичный переводчик Google без ключа;
+  // русский и украинский переводим в латиницу сами, без сети. Результат кэшируется по треку.
+  const CYR = { а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'yo', ж: 'zh', з: 'z', и: 'i', й: 'y', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o',
+    п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'kh', ц: 'ts', ч: 'ch', ш: 'sh', щ: 'shch', ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya',
+    і: 'i', ї: 'yi', є: 'ye', ґ: 'g' };
+  const cyrLat = (x) => x.replace(/[а-яёіїєґ]/gi, (c) => {
+    const l = CYR[c.toLowerCase()];
+    return c === c.toLowerCase() ? l : l.charAt(0).toUpperCase() + l.slice(1);
+  });
+  function script(texts) {
+    const all = texts.join(' ');
+    const cyr = (all.match(/[а-яёіїєґ]/gi) || []).length, lat = (all.match(/[a-z]/gi) || []).length;
+    const other = (all.match(/[^\s\d\p{P}\p{S}a-zа-яёіїєґ]/giu) || []).length;
+    return other > (cyr + lat) * 0.3 ? 'other' : cyr > lat ? 'cyr' : 'lat';
+  }
+  // один запрос на кусок до ~1500 символов; строки идут через \n и так же возвращаются
+  async function gtx(chunk, rm) {
+    const url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ru&dt=t' + (rm ? '&dt=rm' : '') + '&q=' + encodeURIComponent(chunk);
+    const d = await window.SquadOnline.json(url);
+    if (!Array.isArray(d) || !Array.isArray(d[0])) throw new Error('Пустой ответ переводчика');
+    const segs = d[0].filter(Array.isArray);
+    return {
+      tr: segs.filter((x) => typeof x[0] === 'string').map((x) => x[0]).join(''),
+      rm: segs.filter((x) => x[0] == null && typeof x[3] === 'string').map((x) => x[3]).join(' '),
+      lang: typeof d[2] === 'string' ? d[2] : '',
+    };
+  }
+  function chunks(texts) {
+    const out = [];
+    let cur = [];
+    for (const x of texts) {
+      if (cur.length && cur.join('\n').length + x.length > 1500) { out.push(cur); cur = []; }
+      cur.push(x);
+    }
+    if (cur.length) out.push(cur);
+    return out;
+  }
+  // texts — строки текста (пустые не переводим). mode: 'tr' — перевод на русский, 'rm' — латиницей.
+  // Ответ: { subs: [строка под каждой из texts], note } — note вместо subs, когда добавлять нечего.
+  async function extra(key, texts, mode) {
+    const ck = 'tr:' + mode + ':' + key;
+    const saved = await idb.get(ck).catch(() => null);
+    if (saved && saved.n === texts.length) return saved;
+    const sc = script(texts);
+    let res;
+    if (mode === 'rm' && sc === 'lat') res = { note: 'Текст и так латиницей' };
+    else if (mode === 'rm' && sc === 'cyr') res = { subs: texts.map(cyrLat) };
+    else {
+      if (!window.SquadOnline || !navigator.onLine) throw new Error('Нет сети');
+      const idx = [], src = [];
+      texts.forEach((x, i) => { if (x.trim()) { idx.push(i); src.push(x.replace(/\n/g, ' ')); } });
+      const subs = texts.map(() => '');
+      let lang = '', at = 0;
+      const pick = (r) => (mode === 'rm' ? r.rm : r.tr);
+      for (const part of chunks(src)) {
+        const r = await gtx(part.join('\n'), mode === 'rm');
+        lang = lang || r.lang;
+        let got = pick(r).split('\n');
+        if (got.length !== part.length) { // строки склеились — переводим этот кусок построчно (по 4 запроса разом)
+          got = new Array(part.length).fill('');
+          for (let j = 0; j < part.length; j += 4) {
+            const rs = await Promise.all(part.slice(j, j + 4).map((x) => gtx(x, mode === 'rm')));
+            rs.forEach((x, k) => { got[j + k] = pick(x).replace(/\n/g, ' '); });
+          }
+        }
+        got.forEach((x, j) => { subs[idx[at + j]] = x.trim(); });
+        at += part.length;
+      }
+      if (mode === 'tr' && lang === 'ru') res = { note: 'Текст уже на русском' };
+      else if (!subs.some(Boolean)) res = { note: mode === 'rm' ? 'Латиницей не получилось' : 'Перевод пустой' };
+      else res = { subs };
+    }
+    res.n = texts.length;
+    idb.set(ck, res).catch(() => {});
+    return res;
+  }
+
   window.SquadLyrics = {
+    extra,
     get: fetchLyrics,
     parse: parseLrc,
     forget(key) { lyrCache.delete(key); return idb.del('lyr:' + key).catch(() => {}); },

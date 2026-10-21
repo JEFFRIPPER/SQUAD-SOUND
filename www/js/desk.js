@@ -36,8 +36,9 @@
   // ---------- Плеер на всё окно: обложка и кнопки слева, текст справа ----------
   const ov = document.createElement('div');
   ov.className = 'dl';
-  ov.innerHTML = '<div class="dl-bg"></div><i class="dl-tint"></i><header class="dl-head"><img class="dl-art" alt=""><div class="dl-meta"><b></b><span></span></div>' +
+  ov.innerHTML = '<div class="dl-bg"></div><div class="dl-glow" aria-hidden="true"><i></i><i></i><i></i></div><i class="dl-tint"></i><header class="dl-head"><img class="dl-art" alt=""><div class="dl-meta"><b></b><span></span></div>' +
     '<div class="dl-tools"><div class="dl-off" title="Сдвиг текста для этого трека"><button data-off="-1" title="Текст позже">−0,1</button><span>0,0 с</span><button data-off="1" title="Текст раньше">+0,1</button></div>' +
+    '<div class="dl-lang"><button data-ln="tr" title="Перевод на русский под строками">Перевод</button><button data-ln="rm" title="Текст латиницей под строками">Латиницей</button></div>' +
     '<button class="chip dl-kara">' + svg(IC.mic) + '<span>Караоке</span></button></div>' +
     '<button class="icon-btn dl-close" title="Закрыть (Esc)">' + svg(IC.close) + '</button></header>' +
     '<div class="dl-main"><aside class="dl-side"><div class="dl-cover"><img alt=""></div><div class="dl-np"><b></b><span></span></div>' +
@@ -112,6 +113,43 @@
   bLyr.onclick = () => (st.open ? close() : open(false));
   bKara.onclick = () => (st.open && st.kara ? close() : open(true));
   kb.onclick = () => setKara(!st.kara);
+
+  // перевод или латиница под каждой строкой; выбор запоминается
+  let lang = '';
+  try { lang = localStorage.getItem('squad.lyr.lang') || ''; } catch (_) {}
+  const syncLang = () => ov.querySelectorAll('[data-ln]').forEach((b) => b.classList.toggle('on', b.dataset.ln === lang));
+  syncLang();
+  ov.querySelector('.dl-lang').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-ln]');
+    if (!b) return;
+    lang = lang === b.dataset.ln ? '' : b.dataset.ln;
+    try { localStorage.setItem('squad.lyr.lang', lang); } catch (_) {}
+    syncLang();
+    applyLang();
+  });
+  async function applyLang() {
+    box.querySelectorAll('.dl-sub, .dl-note').forEach((el) => el.remove());
+    const r = st.r, t = S.cur();
+    const plainBox = box.querySelector('.dl-plain');
+    const plain = r && !st.lines ? String(r.plain || '').split('\n') : null;
+    if (plainBox && plain) plainBox.innerHTML = plain.map(esc).join('<br>');
+    const job = st.job = {};
+    if (!lang || !r || !t || st.key !== t.key) return;
+    const texts = st.lines ? st.lines.map((l) => l.text) : plain;
+    const was = lang;
+    ov.querySelector('[data-ln="' + was + '"]').classList.add('busy');
+    let res;
+    try { res = await L.extra(t.key, texts, was); }
+    catch (_) { if (st.job === job) S.toast(was === 'tr' ? 'Перевод не загрузился. Проверьте интернет.' : 'Латиницу не удалось получить. Проверьте интернет.'); return; }
+    finally { ov.querySelector('[data-ln="' + was + '"]').classList.remove('busy'); }
+    if (st.job !== job || st.key !== t.key || !st.open) return;
+    if (res.note) { box.insertAdjacentHTML('afterbegin', '<p class="dl-note">' + esc(res.note) + '</p>'); return; }
+    if (st.lines) {
+      box.querySelectorAll('p[data-i]').forEach((p) => { const x = res.subs[+p.dataset.i]; if (x) p.insertAdjacentHTML('beforeend', '<small class="dl-sub">' + esc(x) + '</small>'); });
+    } else if (plainBox) {
+      plainBox.innerHTML = plain.map((x, i) => esc(x) + (res.subs[i] ? '<small class="dl-sub">' + esc(res.subs[i]) + '</small>' : '')).join('<br>');
+    }
+  }
   ov.querySelector('.dl-close').onclick = close;
   window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && st.open) close(); });
   body.addEventListener('click', (e) => {
@@ -120,6 +158,18 @@
     if (l) S.seek(Math.max(0, +l.dataset.t - offOf()));
   });
 
+  // цвет для фона: насыщенность не ниже 55 %, яркость 35–60 % — серые и почти чёрные обложки тоже дают цвет
+  function vivid(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, dd = mx - mn;
+    let h = 0, sat = 0;
+    if (dd) {
+      sat = dd / (1 - Math.abs(2 * l - 1));
+      h = mx === r ? ((g - b) / dd) % 6 : mx === g ? (b - r) / dd + 2 : (r - g) / dd + 4;
+      h *= 60; if (h < 0) h += 360;
+    }
+    return 'hsl(' + Math.round(h) + ' ' + Math.round(Math.max(sat, dd ? 0.55 : 0) * 100) + '% ' + Math.round(Math.min(0.6, Math.max(0.35, l)) * 100) + '%)';
+  }
   // средний цвет обложки — им подкрашен фон
   const cv = document.createElement('canvas');
   cv.width = cv.height = 12;
@@ -131,7 +181,13 @@
       let r = 0, gr = 0, b = 0, n = 0;
       for (let i = 0; i < d.length; i += 4) { r += d[i]; gr += d[i + 1]; b += d[i + 2]; n++; }
       ov.style.setProperty('--dl-tint', Math.round(r / n) + ',' + Math.round(gr / n) + ',' + Math.round(b / n));
-    } catch (_) { ov.style.removeProperty('--dl-tint'); } // чужая картинка без CORS — остаётся красный
+      // три цвета для переливающегося фона: верх, середина и низ обложки, чуть ярче и насыщеннее
+      for (let band = 0; band < 3; band++) {
+        let R = 0, G = 0, B = 0, k = 0;
+        for (let i = band * 4 * 12 * 4; i < (band + 1) * 4 * 12 * 4; i += 4) { R += d[i]; G += d[i + 1]; B += d[i + 2]; k++; }
+        ov.style.setProperty('--dl-c' + (band + 1), vivid(R / k, G / k, B / k));
+      }
+    } catch (_) { ['--dl-tint', '--dl-c1', '--dl-c2', '--dl-c3'].forEach((v) => ov.style.removeProperty(v)); } // чужая картинка без CORS — цвета темы
   }
   const big = ov.querySelector('.dl-cover img');
   big.addEventListener('load', () => tint(big));
@@ -148,7 +204,7 @@
   async function load() {
     const t = S.cur();
     head(t);
-    st.key = t ? t.key : null; st.lines = null; st.cur = -1;
+    st.key = t ? t.key : null; st.lines = null; st.cur = -1; st.r = null;
     showOff();
     cancelAnimationFrame(st.raf);
     loop();
@@ -165,6 +221,8 @@
         box.innerHTML = lines.map((l, i) => '<p data-i="' + i + '" data-t="' + l.t + '">' + (esc(l.text) || '♪') + '</p>').join('');
       } else box.innerHTML = '<div class="dl-plain">' + esc(r.plain).replace(/\n/g, '<br>') + '</div>';
       if (r.src) box.insertAdjacentHTML('beforeend', '<p class="dl-src">Текст: ' + esc(r.src) + '</p>');
+      st.r = r;
+      applyLang();
     } catch (_) {
       if (st.key === t.key) box.innerHTML = '<p class="dl-hint">Не удалось загрузить текст. Проверьте интернет.</p><button class="chip" data-dl="retry">Ещё раз</button>';
     }
@@ -298,6 +356,97 @@
     if (k) home.querySelectorAll('.dh-card[data-k="' + CSS.escape(k) + '"]').forEach((c) => c.classList.add('on'));
   });
   render();
+
+  // ---------- Очередь колонкой справа (широкое окно) ----------
+  // Кнопка «Очередь» в нижнем плеере открывает колонку; в узком окне — как раньше, вкладку очереди.
+  const QW = () => matchMedia('(min-width: 1100px)').matches;
+  const dq = document.createElement('aside');
+  dq.className = 'dq';
+  dq.innerHTML = '<header class="dq-head"><h2>Очередь</h2><button class="chip dq-clear" title="Убрать всё, что дальше">Очистить</button>' +
+    '<button class="icon-btn dq-x" title="Скрыть очередь">' + svg(IC.close) + '</button></header><div class="dq-body"></div>';
+  document.querySelector('.layout').appendChild(dq);
+  const dqBody = dq.querySelector('.dq-body');
+  const qBtn = $('np-queue');
+  let qOn = false;
+  try { qOn = localStorage.getItem('squad.desk.queue') === '1'; } catch (_) {}
+  const DQ_MAX = 200; // дальше 200 треков список не рисуем — колонка остаётся лёгкой
+  const qRow = (t, pos, cur) => '<div class="dq-row' + (cur ? ' on' : '') + '" data-pos="' + pos + '">' + art(t, 'dq-art') +
+    '<div class="dq-meta"><b>' + esc(t.title) + '</b><span>' + esc(t.artist || '') + '</span></div>' +
+    (cur ? '' : '<button class="dq-del" title="Убрать из очереди">' + svg(IC.close) + '</button><i class="dq-grip" title="Перетащить"></i>') + '</div>';
+  function renderQ() {
+    if (!root.classList.contains('dq-on')) return;
+    const { keys, pos } = S.queueList();
+    const cur = pos >= 0 ? S.byKey(keys[pos]) : null;
+    const next = [];
+    for (let i = pos + 1; i < keys.length && next.length < DQ_MAX; i++) { const t = S.byKey(keys[i]); if (t) next.push(qRow(t, i, false)); }
+    const more = keys.length - pos - 1 - next.length;
+    dqBody.innerHTML = (cur ? '<h3>Сейчас играет</h3>' + qRow(cur, pos, true) : '<p class="dq-empty">Очередь пуста. Включите трек или добавьте его через меню «В очередь».</p>') +
+      (next.length ? '<h3>Далее</h3><div class="dq-list">' + next.join('') + '</div>' : cur ? '<p class="dq-empty">Дальше ничего нет. Добавьте треки через меню трека → «В очередь».</p>' : '') +
+      (more > 0 ? '<p class="dq-empty">И ещё ' + more + ' тр.</p>' : '');
+    dq.querySelector('.dq-clear').hidden = !next.length;
+  }
+  let qT = 0;
+  const qSoon = () => { if (!qT && !qDrag) qT = requestAnimationFrame(() => { qT = 0; renderQ(); }); };
+  function setQ(on) {
+    qOn = on;
+    try { localStorage.setItem('squad.desk.queue', on ? '1' : '0'); } catch (_) {}
+    syncQ();
+  }
+  function syncQ() {
+    const show = qOn && QW() && !APK;
+    root.classList.toggle('dq-on', show);
+    qBtn.classList.toggle('on', show);
+    if (show) renderQ();
+  }
+  qBtn.onclick = () => { if (QW()) setQ(!qOn); else S.openLib('queue'); };
+  dq.querySelector('.dq-x').onclick = () => setQ(false);
+  dq.querySelector('.dq-clear').onclick = () => S.clearQueue();
+  ['queue', 'track', 'library'].forEach((ev) => S.on(ev, qSoon));
+  window.addEventListener('resize', syncQ);
+  dqBody.addEventListener('click', (e) => {
+    const row = e.target.closest('.dq-row');
+    if (!row || e.target.closest('.dq-grip')) return;
+    if (e.target.closest('.dq-del')) { S.removeQueue(+row.dataset.pos); return; }
+    S.playPos(+row.dataset.pos);
+  });
+  // перетаскивание за «ручку»: строка едет за мышью, позиция в очереди меняется при отпускании
+  let qDrag = null;
+  dqBody.addEventListener('pointerdown', (e) => {
+    const g = e.target.closest('.dq-grip');
+    if (!g || e.button) return;
+    e.preventDefault();
+    const row = g.closest('.dq-row');
+    qDrag = { row, id: e.pointerId, from: +row.dataset.pos };
+    row.classList.add('drag');
+    try { g.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+  dqBody.addEventListener('pointermove', (e) => {
+    if (!qDrag || e.pointerId !== qDrag.id) return;
+    const list = qDrag.row.parentNode;
+    let before = null;
+    for (const r of list.children) {
+      if (r === qDrag.row) continue;
+      const b = r.getBoundingClientRect();
+      if (e.clientY < b.top + b.height / 2) { before = r; break; }
+    }
+    if (before !== qDrag.row.nextSibling) list.insertBefore(qDrag.row, before);
+    const b = dqBody.getBoundingClientRect();
+    if (e.clientY < b.top + 40) dqBody.scrollTop -= 10; else if (e.clientY > b.bottom - 40) dqBody.scrollTop += 10;
+  });
+  const qEnd = (e) => {
+    if (!qDrag || e.pointerId !== qDrag.id) return;
+    const { row, from } = qDrag;
+    qDrag = null;
+    row.classList.remove('drag');
+    const rows = Array.from(row.parentNode.children);
+    // строка встала на i-е место списка — значит, в очереди она займёт i-ю из старых позиций этого списка
+    const olds = rows.map((r) => +r.dataset.pos).sort((x, y) => x - y);
+    const to = olds[rows.indexOf(row)];
+    if (to !== from) S.moveQueue(from, to); else renderQ();
+  };
+  dqBody.addEventListener('pointerup', qEnd);
+  dqBody.addEventListener('pointercancel', qEnd);
+  if (!APK) syncQ();
 
   // ---------- Настройки окном с разделами (широкое окно) ----------
   // Эквалайзер, Эффекты и Темы на ПК открываются не вкладкой, а окном поверх текущего экрана.
