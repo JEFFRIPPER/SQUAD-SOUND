@@ -364,6 +364,22 @@
   const like = acts.querySelector('[data-np="like"]');
   like.classList.add('np-like');
 
+  // Плеер не прокручивается: если всё не влезает по высоте, уменьшаем обложку ровно на нехватку
+  function fitCover() {
+    if (S.settings.tab !== 'player' || !now.clientHeight) return;
+    const c = $('cover');
+    c.style.width = '';
+    // scrollHeight не годится: размытый фон (.np-bg) нарочно вылезает за края. Меряем по нижней панели кнопок
+    const over = acts.getBoundingClientRect().bottom - (now.getBoundingClientRect().bottom - parseFloat(getComputedStyle(now).paddingBottom));
+    if (over > 0.5) c.style.width = Math.max(120, c.getBoundingClientRect().width - over) + 'px';
+  }
+  if (window.ResizeObserver) {
+    const ro = new ResizeObserver(() => fitCover());
+    [...now.children].forEach((el) => { if (el.id !== 'cover') ro.observe(el); });
+    ro.observe(now);
+  }
+  window.addEventListener('resize', fitCover);
+
   function syncNext() {
     const q = S.queueInfo, left = q.pos >= 0 ? Math.max(0, q.len - q.pos - 1) : 0;
     $('np-left').textContent = left > 99 ? '99+' : left || '';
@@ -371,7 +387,7 @@
     nextChip.textContent = n ? 'Далее: ' + (n.artist && n.artist !== 'Неизвестный исполнитель' ? n.artist + ' — ' : '') + n.title : '';
     nextChip.hidden = !n;
   }
-  ['queue', 'library', 'tab'].forEach((ev) => S.on(ev, () => { if (S.settings.tab === 'player') syncNext(); }));
+  ['queue', 'library', 'tab'].forEach((ev) => S.on(ev, () => { if (S.settings.tab === 'player') { syncNext(); fitCover(); } }));
 
   function syncBg() {
     const img = $('cover-img');
@@ -595,7 +611,7 @@
     const W = 320, H = 150, PAD = 14, MAX = 12;
     const xs = bands.map((_, i) => PAD + i * (W - 2 * PAD) / (bands.length - 1));
     const yOf = (v) => H / 2 - v / MAX * (H / 2 - PAD);
-    const body = openSheet('Эквалайзер', '<p class="eqq-hifi hint"></p><div class="chips eqq-pr"></div>' +
+    const body = openSheet('Эквалайзер', '<div class="chips eqq-pr"></div>' +
       '<svg class="eqq" viewBox="0 0 ' + W + ' ' + H + '"><line x1="0" x2="' + W + '" y1="' + H / 2 + '" y2="' + H / 2 + '" class="eqq-zero"/>' +
       '<path class="eqq-fill"/><path class="eqq-line"/>' + xs.map((x, i) => '<circle r="9" cx="' + x + '" data-i="' + i + '"/>').join('') + '</svg>' +
       '<div class="eqq-f">' + freqs.map((f) => '<span>' + f + '</span>').join('') + '</div>' +
@@ -617,8 +633,6 @@
       g.querySelector('.eqq-line').setAttribute('d', d);
       g.querySelector('.eqq-fill').setAttribute('d', d + ' L' + xs[xs.length - 1] + ' ' + H + ' L' + xs[0] + ' ' + H + 'Z');
       pts.forEach((c, i) => c.setAttribute('cy', yOf(v[i])));
-      const st = S.sound();
-      body.querySelector('.eqq-hifi').textContent = st.hifi ? 'Включён Hi-Fi «всегда без обработки» — эквалайзер сейчас не звучит. Выключается во вкладке «Звук».' : '';
       const cur = sel.value;
       body.querySelector('.eqq-pr').innerHTML = [...sel.options].filter((o) => o.value !== 'custom')
         .map((o) => '<button class="chip' + (o.value === cur ? ' on' : '') + '" data-p="' + o.value + '">' + esc(o.textContent) + '</button>').join('') +
@@ -1078,22 +1092,6 @@
   pcardS.className = 'card';
   $('panel-eq').prepend(pcardS);
 
-  // ---------- Hi-Fi: звук мимо всей обработки ----------
-  const hcard = document.createElement('div');
-  hcard.className = 'card hifi-card';
-  pcardS.before(hcard);
-  const eng = window.squadEngine;
-  function hifiUI() {
-    const st = eng ? eng.state : {};
-    const on = !!(eng && (eng.ctx ? eng.hifi : st.hifi || eng._neutral())); // до первого трека графа ещё нет — считаем по настройкам
-    hcard.innerHTML = '<h3>Hi-Fi</h3><p class="hint">Максимальное качество: звук идёт прямо из файла, без эквалайзера, эффектов и лимитера. ' +
-      'Если эквалайзер ровный и эффекты выключены, так происходит само.</p>' +
-      '<label class="switch"><input type="checkbox" id="hifi-on"' + (st.hifi ? ' checked' : '') + '><span></span>Всегда без обработки</label>' +
-      '<p class="hifi-st' + (on ? ' on' : '') + '">' + (on ? '● Сейчас: чистый звук' : '○ Сейчас: идёт обработка (эквалайзер или эффекты)') + '</p>';
-  }
-  if (eng) eng.onroute = () => hifiUI();
-  hifiUI();
-  hcard.addEventListener('change', (e) => { if (e.target.id === 'hifi-on') { S.setFx('hifi', e.target.checked); hifiUI(); } });
   function presetsUI() {
     pcardS.innerHTML = '<h3>Мои пресеты</h3><p class="hint">Эквалайзер и эффекты целиком. Без ограничений по количеству.</p>' +
       (presets.length ? '<div class="chips">' + presets.map((x, i) => '<span class="chip pr-chip" data-pr="' + i + '">' + esc(x.name) +

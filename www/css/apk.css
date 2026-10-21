@@ -124,7 +124,7 @@ html.apk-search #search { min-height: 52px; border-radius: 28px; font-size: 16px
 
 /* ---------- Плеер на весь экран ---------- */
 html.apk .now { position: fixed; inset: 0; z-index: 40; isolation: isolate; display: flex; flex-direction: column; gap: 14px;
-  padding: calc(var(--safe-top) + 6px) 24px calc(var(--safe-bottom) + 18px); background: var(--bg); overflow-x: hidden; overflow-y: auto;
+  padding: calc(var(--safe-top) + 6px) 24px calc(var(--safe-bottom) + 18px); background: var(--bg); overflow: hidden; /* экран неподвижный: обложка сама ужимается под высоту (fitCover в apk.js) */
   border: 0; border-radius: 0; transition: transform var(--md-medium) var(--md-ease-decel); }
 html.apk .now.hidden-mobile { display: none !important; }
 html.apk .now:not(.hidden-mobile) { animation: np-up 420ms var(--md-ease-decel); }
@@ -170,7 +170,6 @@ html.apk .np-acts { display: flex; justify-content: space-between; gap: 12px; ma
 .np-like.on svg { fill: currentColor; transform: scale(1.12); }
 
 /* быстрый эквалайзер и скорость в шторке */
-.eqq-hifi:empty { display: none; }
 .eqq-pr { flex-wrap: nowrap; overflow-x: auto; margin: 0 -20px 10px; padding: 0 20px; scrollbar-width: none; }
 svg.eqq { width: 100%; height: auto; display: block; touch-action: none; border-radius: 18px; background: var(--md-container-highest); }
 .eqq-zero { stroke: color-mix(in srgb, var(--text) 18%, transparent); stroke-width: 1; stroke-dasharray: 4 4; }
@@ -334,8 +333,6 @@ html.apk .sheet .chips .btn { min-height: 36px; }
 html.apk .rz-art:not(img) { background: var(--md-container-high); }
 
 /* Hi-Fi */
-html.apk .hifi-st { margin: 10px 0 0; font-size: 13px; color: var(--muted); }
-html.apk .hifi-st.on { color: var(--accent); font-weight: 600; }
 .spd-chips { flex-wrap: nowrap; justify-content: space-between; margin-bottom: 10px; }
 .spd-chips .chip { padding-left: 10px; padding-right: 10px; }
 .im-old { margin: 18px 0 0; font-size: 14px; color: var(--muted); font-weight: 600; }

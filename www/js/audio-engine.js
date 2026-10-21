@@ -2,7 +2,8 @@
  *
  * Цепочка:
  * <audio A|B> → (кроссфейд) → pitch (AudioWorklet) → preamp → EQ x10 → bass → width(M/S)
- *        → [dry | reverb | echo] → pan (+8D LFO) → limiter → master → analyser → out
+ *        → [dry | reverb | echo] → pan (+8D LFO) → limiter → trim → master → analyser → out
+ * Пока эквалайзер плоский и эффекты выключены, звук идёт с дек прямо на громкость (master) — бит в бит.
  */
 (function () {
   'use strict';
@@ -10,7 +11,7 @@
   const EQ_FREQS = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
 
   // Гранулярный pitch-shifter: две «читающие головки» по кольцевому буферу
-  // с треугольно-синусным кроссфейдом. Скорость не меняет, только тон.
+  // с окнами Ханна (sin²): их сумма всегда 1 — громкость не «качается». Скорость не меняет, только тон.
   const PITCH_WORKLET = `
 class SquadPitch extends AudioWorkletProcessor {
   static get parameterDescriptors() {
@@ -19,7 +20,7 @@ class SquadPitch extends AudioWorkletProcessor {
   constructor() {
     super();
     this.size = 16384;
-    this.win = Math.round(sampleRate * 0.05);
+    this.win = Math.round(sampleRate * 0.08); // окно 80 мс: на басу меньше «дробления», чем было на 50 мс
     this.buf = [new Float32Array(this.size), new Float32Array(this.size)];
     this.w = 0;
     this.phase = 0;
@@ -54,8 +55,8 @@ class SquadPitch extends AudioWorkletProcessor {
       let p2 = p1 + 0.5; if (p2 >= 1) p2 -= 1;
       const d1 = p1 * this.win + 2;
       const d2 = p2 * this.win + 2;
-      const g1 = Math.sin(Math.PI * p1);
-      const g2 = Math.sin(Math.PI * p2);
+      const s1 = Math.sin(Math.PI * p1), s2 = Math.sin(Math.PI * p2);
+      const g1 = s1 * s1, g2 = s2 * s2;
       for (let c = 0; c < chans; c++) {
         output[c][s] = this.read(c, d1) * g1 + this.read(c, d2) * g2;
       }
@@ -89,11 +90,12 @@ registerProcessor('squad-pitch', SquadPitch);
     constructor(audioEl, audioEl2) {
       this.decks = [audioEl, audioEl2].filter(Boolean);
       this.active = 0;
-      // Экономный граф (APK): реверб, эхо и сдвиг тона подключаются только когда включены.
-      // На телефоне свёртка 2,5-секундного реверба и worklet даже «на нуле» съедают поток звука —
+      // Экономный граф: реверб, эхо и сдвиг тона подключаются только когда включены.
+      // Свёртка 2,5-секундного реверба и worklet даже «на нуле» съедают поток звука —
       // при нагрузке (загрузки Telegram) он не успевает и в наушниках слышны щелчки.
-      this.lean = false;
+      this.lean = true;
       this.fadeMul = 1; // затухание таймера сна поверх громкости
+      this.overlap = false; // включён кроссфейд (app.js) — нужен лимитер
       this.ctx = null;
       this.ready = null;
       this.state = {
@@ -105,7 +107,6 @@ registerProcessor('squad-pitch', SquadPitch);
         eightD: false, eightDSpeed: 0.15,
         limiter: true, volume: 0.9,
         karaoke: 0, // 0..1: убрать голос (то, что посередине стерео), бас остаётся
-        hifi: false, // только lean: звук идёт мимо всей обработки (эквалайзер и эффекты не действуют)
       };
     }
 
@@ -194,12 +195,19 @@ registerProcessor('squad-pitch', SquadPitch);
       n.lfo.connect(n.lfoDepth).connect(n.pan.pan);
       n.lfo.start();
 
+      // Лимитер только ловит пики после эффектов: до -1 дБ сигнал не трогает.
+      // Компрессор Web Audio сам добавляет «make-up» усиление (1/усиление на 0 дБ)^0.6 —
+      // из-за него громкие треки раньше упирались в 0 дБ и хрипели. trim его снимает.
       n.limiter = ctx.createDynamicsCompressor();
-      n.limiter.threshold.value = -3;
-      n.limiter.knee.value = 3;
-      n.limiter.ratio.value = 20;
-      n.limiter.attack.value = 0.003;
-      n.limiter.release.value = 0.15;
+      const THR = -1, RATIO = 20;
+      n.limiter.threshold.value = THR;
+      n.limiter.knee.value = 0;
+      n.limiter.ratio.value = RATIO;
+      n.limiter.attack.value = 0.001;
+      n.limiter.release.value = 0.08;
+      n.trim = ctx.createGain();
+      n.trim.gain.value = Math.pow(10, 0.6 * (THR - THR / RATIO) / 20);
+      n.limiter.connect(n.trim);
       n.master = ctx.createGain();
       n.analyser = ctx.createAnalyser();
       n.analyser.fftSize = 2048;
@@ -310,13 +318,14 @@ registerProcessor('squad-pitch', SquadPitch);
       return eqFlat && !s.bass && s.width === 1 && !s.karaoke && !s.balance && !s.reverbMix && !s.echoMix && !s.eightD && !s.pitch;
     }
 
-    // Куда идёт звук с дек (только lean может срезать путь):
-    //  hifi  — сразу на громкость: ни фильтров, ни лимитера, ни пересчёта — бит в бит, как в обычном плеере;
+    // Куда идёт звук с дек:
+    //  hifi  — обработка не нужна: сразу на громкость, ни фильтров, ни лимитера — бит в бит, как в обычном плеере;
     //  pitch — через сдвиг тона; eq — обычная цепочка без worklet.
     _route() {
       const n = this.nodes;
       if (!n) return;
-      const hifi = this.lean && (this.state.hifi || this._neutral());
+      // С кроссфейдом две деки звучат разом и сумма может перевалить за 0 дБ — тогда путь через лимитер
+      const hifi = this._neutral() && !this.overlap;
       const pitch = !hifi && !!n.pitch && (!this.lean || Math.abs(this.state.pitch) > 1e-3);
       const mode = hifi ? 'hifi' : pitch ? 'pitch' : 'eq';
       if (mode === n.mode) return;
@@ -327,6 +336,7 @@ registerProcessor('squad-pitch', SquadPitch);
     }
 
     get hifi() { return !!(this.nodes && this.nodes.mode === 'hifi'); }
+    setOverlap(on) { this.overlap = !!on; this._route(); }
 
     // Подключить/отключить ветку эффекта (реверб, эхо) от общей шины.
     // Выключаем с задержкой: сначала гаснет громкость ветки, потом рвём связь — без щелчка.
@@ -350,9 +360,10 @@ registerProcessor('squad-pitch', SquadPitch);
       const n = this.nodes;
       if (!n) return;
       try { n.pan.disconnect(); } catch (_) {}
-      try { n.limiter.disconnect(); } catch (_) {}
+      try { n.trim.disconnect(); } catch (_) {}
       if (this.state.limiter) {
-        n.pan.connect(n.limiter).connect(n.master);
+        n.pan.connect(n.limiter);
+        n.trim.connect(n.master);
       } else {
         n.pan.connect(n.master);
       }
@@ -371,6 +382,7 @@ registerProcessor('squad-pitch', SquadPitch);
 
     load(state) {
       Object.assign(this.state, state || {});
+      delete this.state.hifi; // тумблер Hi-Fi убран в 2.1: чистый звук теперь всегда, когда нет обработки
       if (!Array.isArray(this.state.eq) || this.state.eq.length !== EQ_FREQS.length) {
         this.state.eq = EQ_FREQS.map(() => 0);
       }
@@ -410,14 +422,15 @@ registerProcessor('squad-pitch', SquadPitch);
           else decks.forEach((a) => { a.volume = v; });
           break;
         }
-        case 'eq': case 'eqOn': case 'preamp':
+        case 'eq': case 'eqOn': case 'preamp': case 'bass': {
           if (!n) break;
-          smooth(n.preamp.gain, Math.pow(10, (s.eqOn ? s.preamp : 0) / 20));
+          // Запас под подъём: сколько полосы и бас поднимают, на столько опускаем вход — подъём не перегружает
+          const boost = Math.max(0, s.eqOn ? Math.max(...s.eq) : 0) + Math.max(0, s.bass);
+          smooth(n.preamp.gain, Math.pow(10, ((s.eqOn ? s.preamp : 0) - boost) / 20));
           n.eq.forEach((b, i) => smooth(b.gain, s.eqOn ? s.eq[i] : 0));
+          smooth(n.bass.gain, s.bass);
           break;
-        case 'bass':
-          if (n) smooth(n.bass.gain, s.bass);
-          break;
+        }
         case 'width': case 'karaoke': {
           if (!n) break;
           const w = s.width;
