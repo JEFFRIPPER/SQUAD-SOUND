@@ -45,7 +45,7 @@
   document.body.appendChild(ov);
   const body = ov.querySelector('.dl-body'), box = ov.querySelector('.dl-lines'), kb = ov.querySelector('.dl-kara');
   const sk = ov.querySelector('.dl-seek input'), [tc, td] = ov.querySelectorAll('.dl-seek span');
-  const st = { open: false, kara: false, key: null, lines: null, cur: -1, raf: 0, drag: false };
+  const st = { open: false, kara: false, key: null, lines: null, cur: -1, raf: 0, drag: false, pv: -1, ct: '', dt: '' };
 
   // кнопки управления — копии кнопок нижнего плеера, нажатие уходит в оригинал
   const ctl = ov.querySelector('.dl-ctl');
@@ -171,13 +171,12 @@
   function loop() {
     if (!st.open) return;
     const tm = S.time();
-    if (!st.drag) {
-      const p = tm.dur ? tm.cur / tm.dur : 0;
-      sk.value = Math.round(p * 1000);
-      sk.style.setProperty('--p', p * 100 + '%');
-      tc.textContent = fmt(tm.cur);
-    }
-    td.textContent = fmt(tm.dur);
+    // в DOM пишем только то, что изменилось: каждый кадр трогать ползунок и текст — лишняя перерисовка
+    const pv = tm.dur ? Math.round(tm.cur / tm.dur * 1000) : 0;
+    if (!st.drag && pv !== st.pv) { st.pv = pv; sk.value = pv; sk.style.setProperty('--p', pv / 10 + '%'); }
+    const ct = fmt(tm.cur), dt = fmt(tm.dur);
+    if (!st.drag && ct !== st.ct) { st.ct = ct; tc.textContent = ct; }
+    if (dt !== st.dt) { st.dt = dt; td.textContent = dt; }
     if (st.lines) {
       const now = tm.cur + 0.25 + offOf();
       let i = -1;
@@ -290,7 +289,13 @@
   const soon = () => { clearTimeout(homeT); homeT = setTimeout(render, 300); };
   S.on('tab', render);
   S.on('library', soon);
-  S.on('track', soon);
+  // смена трека: на главной только переносим подсветку, без полной перерисовки с картинками
+  S.on('track', () => {
+    if (S.settings.tab !== 'home') return;
+    const k = (S.cur() || {}).key;
+    home.querySelectorAll('.dh-card.on').forEach((c) => c.classList.remove('on'));
+    if (k) home.querySelectorAll('.dh-card[data-k="' + CSS.escape(k) + '"]').forEach((c) => c.classList.add('on'));
+  });
   render();
 
   // ---------- Настройки окном с разделами (широкое окно) ----------
@@ -348,4 +353,8 @@
   });
   window.addEventListener('resize', () => { if (sec && !wide()) closeSet(); });
   if (['eq', 'fx', 'themes'].includes(S.settings.tab) && wide()) S.showTab('home');
+
+  // Кнопки окна .exe — последними в документе: Electron считает зоны перетаскивания по порядку элементов,
+  // и полоса перетаскивания над контентом (она ниже в разметке) перекрывала их — кнопки не нажимались
+  if (root.classList.contains('desk')) document.body.appendChild($('winctl'));
 })();
