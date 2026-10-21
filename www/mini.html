@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>SQUAD SOUND — мини-плеер</title>
+  <link rel="stylesheet" href="css/mini.css">
+</head>
+<body>
+  <main class="mp" id="mp">
+    <div class="mp-art"><img id="art" alt=""><span id="letter">S</span></div>
+    <div class="mp-mid">
+      <b id="title">Ничего не играет</b>
+      <span id="artist">SQUAD SOUND</span>
+      <div class="mp-bar" id="bar" title="Перемотать"><i id="prog"></i></div>
+    </div>
+    <div class="mp-ctl">
+      <button data-c="prev" title="Предыдущий"><svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg></button>
+      <button data-c="toggle" class="mp-play" title="Играть / пауза"><svg viewBox="0 0 24 24"><path id="pp" d="M7 4v16l13-8z"/></svg></button>
+      <button data-c="next" title="Следующий"><svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM4 5v14l11-7z"/></svg></button>
+    </div>
+    <div class="mp-win">
+      <button data-c="show" title="Открыть SQUAD SOUND"><svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-8 8M10 5H5v14h14v-5"/></svg></button>
+      <button data-c="close" title="Закрыть мини-плеер"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </div>
+  </main>
+  <script src="js/mini.js"></script>
+</body>
+</html>

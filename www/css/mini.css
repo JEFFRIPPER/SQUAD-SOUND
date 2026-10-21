@@ -1,0 +1,34 @@
+/* Мини-плеер .exe: окно 360×104 без рамки, прозрачное по краям — сама карточка скруглённая */
+@font-face { font-family: 'Squad'; font-display: swap; src: url(../fonts/squad-latin.woff2) format('woff2'); unicode-range: U+0000-00FF, U+2000-206F; }
+@font-face { font-family: 'Squad'; font-display: swap; src: url(../fonts/squad-cyrillic.woff2) format('woff2'); unicode-range: U+0400-045F, U+0490-0491, U+2116; }
+:root { --bg: #070203; --text: #f8e9ea; --accent: #ff2d48; }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none;
+  font: 13px/1.3 system-ui, 'Segoe UI', sans-serif; color: var(--text); }
+.mp { position: absolute; inset: 4px; display: flex; align-items: center; gap: 12px; padding: 8px 10px 8px 8px; border-radius: 22px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg)); border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+  -webkit-app-region: drag; }
+.mp-art { position: relative; flex: 0 0 80px; height: 80px; border-radius: 16px; overflow: hidden; display: grid; place-items: center;
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 40%, var(--bg))); }
+.mp-art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: none; }
+.mp-art.has img { display: block; }
+.mp-art span { font: 34px 'Squad', system-ui, sans-serif; color: #fff; }
+.mp-mid { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.mp-mid b { font: 15px 'Squad', system-ui, sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mp-mid span { opacity: .7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mp-bar { position: relative; margin-top: 8px; height: 14px; display: flex; align-items: center; cursor: pointer; -webkit-app-region: no-drag; }
+.mp-bar::after { content: ''; position: absolute; left: 0; right: 0; height: 4px; border-radius: 4px; background: color-mix(in srgb, var(--text) 18%, transparent); }
+.mp-bar i { position: relative; z-index: 1; height: 4px; width: 0; border-radius: 4px; background: var(--accent); }
+.mp-ctl, .mp-win { display: flex; align-items: center; -webkit-app-region: no-drag; }
+.mp-ctl { gap: 2px; }
+button { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; background: none; color: inherit; cursor: pointer; }
+button:hover { background: color-mix(in srgb, var(--text) 10%, transparent); }
+button svg { width: 20px; height: 20px; fill: currentColor; }
+.mp-play { width: 44px; height: 44px; background: var(--accent); color: #fff; }
+.mp-play:hover { background: color-mix(in srgb, var(--accent) 85%, #fff); }
+.mp-play svg { width: 22px; height: 22px; }
+.mp-win { position: absolute; top: 4px; right: 6px; gap: 0; opacity: 0; transition: opacity .15s; }
+.mp:hover .mp-win { opacity: 1; }
+.mp-win button { width: 24px; height: 24px; }
+.mp-win svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.mp.off .mp-ctl button { opacity: .4; pointer-events: none; }

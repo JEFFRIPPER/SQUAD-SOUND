@@ -19,6 +19,12 @@ contextBridge.exposeInMainWorld('squadNative', {
   installUpdate: () => ipcRenderer.invoke('update-install'),
   onUpdate: (cb) => ipcRenderer.on('update-status', (_e, ev) => cb(ev)),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
+  expandPaths: (paths) => ipcRenderer.invoke('expand-paths', paths),
+  // плеер снаружи окна: трей, превью на панели задач, горячие клавиши, мини-плеер, Discord
+  playerState: (st) => ipcRenderer.send('player-state', st),
+  onPlayerCmd: (cb) => ipcRenderer.on('player-cmd', (_e, c, v) => cb(c, v)),
+  setNativeCfg: (c) => ipcRenderer.invoke('native-cfg', c),
+  openMini: () => ipcRenderer.send('open-mini'),
   pathForFile: (file) => {
     try { return webUtils.getPathForFile(file); } catch (_) { return ''; }
   },
