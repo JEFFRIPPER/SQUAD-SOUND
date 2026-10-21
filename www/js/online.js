@@ -19,6 +19,7 @@
     if (isAndroid) {
       const r = await cap.nativePromise('CapacitorHttp', 'request', {
         url, method: 'GET', responseType: binary ? 'arraybuffer' : 'json', headers: { Accept: binary ? '*/*' : 'application/json' },
+        connectTimeout: 15000, readTimeout: binary ? 120000 : 20000, // без них запрос на плохой сети висел без конца
       });
       if (r.status >= 400) throw new Error('HTTP ' + r.status);
       if (!binary) return typeof r.data === 'string' ? JSON.parse(r.data) : r.data;
@@ -45,6 +46,7 @@
         const req = fn(tx.objectStore('audio'));
         tx.oncomplete = () => res(req && req.result);
         tx.onerror = () => rej(tx.error);
+        tx.onabort = () => rej(tx.error || new Error('IndexedDB: транзакция прервана'));
       });
     };
     return {
@@ -76,6 +78,7 @@
       source: SOURCES[a.source] || SOURCES[a.provider] || a.source || a.provider || '',
       page: a.foreign_landing_url || '',
       ext: a.filetype || '',
+      size: Number(a.filesize) || 0,
     };
   }
 
@@ -88,11 +91,15 @@
   }
 
   // ---------- Добавление ----------
+  const ANDROID_MAX = 40 * 1024 * 1024;
   const loading = new Map();
   function add(res) {
     if (loading.has(res.key)) return loading.get(res.key);
     const p = (async () => {
+      // на Android файл идёт через мост base64 целиком в памяти: огромный WAV ронял приложение
+      if (isAndroid && res.size > ANDROID_MAX) throw new Error('Файл слишком большой для телефона (' + Math.round(res.size / 1048576) + ' МБ)');
       const b = await get(res.url, true);
+      if (isAndroid && b.size > ANDROID_MAX) throw new Error('Файл слишком большой для телефона');
       if (!b || !b.size) throw new Error('Пустой файл');
       await cache.put(res.key, b);
       const d = { key: res.key, title: res.title, artist: res.artist, duration: res.duration, license: res.license, source: res.source, page: res.page, ext: res.ext };

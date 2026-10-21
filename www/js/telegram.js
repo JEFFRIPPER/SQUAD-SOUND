@@ -36,6 +36,7 @@
         const req = fn(tx.objectStore('audio'));
         tx.oncomplete = () => res(req && req.result);
         tx.onerror = () => rej(tx.error);
+        tx.onabort = () => rej(tx.error || new Error('IndexedDB: транзакция прервана'));
       });
     };
     return {
@@ -96,6 +97,25 @@
 
   function saveSession() { if (client) ls.set('session', client.session.save()); }
 
+  // connect() в GramJS при неудаче не бросает ошибку, а молча остаётся отключённым
+  async function connectOrThrow(c) {
+    await c.connect();
+    if (!c.connected) throw new Error('network: нет соединения с Telegram');
+  }
+  // destroy() гасит и переподключение, и фоновые соединения; disconnect() оставлял их жить
+  async function closeClient(c) {
+    if (!c) return;
+    try { await (c.destroy ? c.destroy() : c.disconnect()); } catch (_) {}
+  }
+  // Сессию выбрасываем только когда Telegram прямо сказал, что она мертва. Сеть пропала — сессия остаётся
+  const DEAD = /AUTH_KEY_UNREGISTERED|AUTH_KEY_INVALID|SESSION_REVOKED|SESSION_EXPIRED|USER_DEACTIVATED/;
+  async function authorized(c) {
+    try { await c.invoke(new G.Api.updates.GetState()); return true; } catch (e) {
+      if (DEAD.test((e && (e.errorMessage || e.message)) || '')) return false;
+      throw e;
+    }
+  }
+
   async function loadMe() {
     const u = await client.getMe();
     const me = { name: [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || 'Telegram', phone: u.phone ? '+' + u.phone : '' };
@@ -109,8 +129,8 @@
     set({ phase: 'connecting', error: '', me: ls.get('me', null) });
     try {
       client = makeClient(ls.get('session', ''));
-      await client.connect();
-      if (!(await client.checkAuthorization())) { await dropSession(); set({ phase: 'idle', error: 'Сессия завершена, войдите заново' }); return; }
+      await connectOrThrow(client);
+      if (!(await authorized(client))) { await dropSession(); set({ phase: 'idle', error: 'Сессия завершена, войдите заново' }); return; }
       set({ phase: 'ready', me: await loadMe() });
     } catch (e) {
       console.warn('Telegram:', e);
@@ -122,43 +142,55 @@
   async function ensure() {
     if (client && client.connected) return client;
     if (!client) client = makeClient(ls.get('session', ''));
-    await client.connect();
+    await connectOrThrow(client);
     if (st.error) set({ error: '' });
     return client;
   }
 
   // ---------- Вход ----------
   function waitInput(phase, extra) {
+    if (!run) return Promise.reject(new Error('cancel')); // вход уже отменили, пока шло подключение
     return new Promise((resolve, reject) => {
       ask = { resolve, reject };
       set(Object.assign({ phase }, extra || {}));
     });
   }
 
+  let run = null; // текущая попытка входа: { cancelled } — «Отмена» работает и пока идёт подключение
   async function login() {
     if (!configured || ['phone', 'code', 'password', 'connecting'].includes(st.phase)) return;
-    let cancelled = false;
+    const me = run = { cancelled: false };
+    let stopErr = '';
     set({ phase: 'connecting', error: '' });
+    const c = client = makeClient('');
     try {
-      client = makeClient('');
-      await client.start({
+      await c.start({
         phoneNumber: () => waitInput('phone'),
         phoneCode: (viaApp) => waitInput('code', { viaApp: !!viaApp }),
         password: (hint) => waitInput('password', { hint: hint || '' }),
+        // номера нет в Telegram: без этого GramJS сам зарегистрировал бы новый аккаунт с именем «first name»
+        firstAndLastNames: async () => { throw new Error('PHONE_NUMBER_UNOCCUPIED'); },
         onError: async (e) => {
-          if (cancelled || (e && e.message === 'cancel')) { cancelled = true; return true; }
+          if (me.cancelled || (e && e.message === 'cancel')) { me.cancelled = true; return true; }
+          const m = (e && (e.errorMessage || e.message)) || '';
           set({ error: errText(e) });
           // ошибки, после которых повторять ввод бессмысленно
-          return /API_ID|BANNED|First name/i.test((e && (e.errorMessage || e.message)) || '');
+          if (/API_ID|BANNED|UNOCCUPIED|First name/i.test(m)) { stopErr = errText(e); return true; }
+          return false;
         },
       });
+      if (me.cancelled) throw new Error('cancel');
       saveSession();
       set({ phase: 'ready', error: '', me: await loadMe() });
     } catch (e) {
-      ask = null;
-      try { await client.disconnect(); } catch (_) {}
-      client = null;
-      set({ phase: 'idle', error: cancelled ? '' : errText(e) });
+      if (run === me) {
+        ask = null;
+        if (client === c) client = null;
+        set({ phase: 'idle', error: me.cancelled ? '' : stopErr || errText(e) });
+      }
+      await closeClient(c);
+    } finally {
+      if (run === me) run = null;
     }
   }
 
@@ -170,17 +202,26 @@
   }
 
   function cancel() {
-    if (ask) { const a = ask; ask = null; a.reject(new Error('cancel')); }
+    if (ask) { const a = ask; ask = null; a.reject(new Error('cancel')); return; }
+    // подключение ещё идёт — бросаем эту попытку, клиент закрываем в фоне
+    if (run && st.phase === 'connecting') {
+      const r = run; r.cancelled = true; run = null;
+      const c = client; client = null;
+      set({ phase: 'idle', error: '' });
+      closeClient(c);
+    }
   }
 
   async function dropSession() {
     ls.set('session', null); ls.set('me', null);
-    try { if (client) await client.disconnect(); } catch (_) {}
-    client = null;
+    const c = client; client = null;
+    docsCache = null;
+    await closeClient(c);
   }
 
   async function logout() {
     pf.stop = true;
+    cancel();
     try { await ensure(); await client.invoke(new G.Api.auth.LogOut()); } catch (_) {}
     await dropSession();
     ls.set('tracks', null); ls.set('sources', null); ls.set('found', null);
@@ -214,6 +255,18 @@
     };
   }
 
+  // Список документов профиля помним 10 минут: раньше его заново тянули из сети перед каждым скачиванием трека.
+  // Устарел file_reference или трека нет в списке — перезапрашиваем один раз
+  let docsCache = null; // { at, p }
+  function profileDocsCached(fresh) {
+    if (fresh || !docsCache || Date.now() - docsCache.at > 600000) {
+      const p = profileDocs();
+      docsCache = { at: Date.now(), p };
+      p.catch(() => { if (docsCache && docsCache.p === p) docsCache = null; });
+    }
+    return docsCache.p;
+  }
+
   // Все документы музыки профиля (свежие file_reference — нужны для скачивания)
   async function profileDocs() {
     await ensure();
@@ -230,7 +283,8 @@
 
   async function sync() {
     const out = [];
-    for (const d of await profileDocs()) { const t = trackOf(d); if (t) out.push(t); }
+    const docs = await profileDocsCached(true);
+    for (const d of docs) { const t = trackOf(d); if (t) out.push(t); }
     ls.set('tracks', out);
     return out;
   }
@@ -325,12 +379,22 @@
     const p = (async () => {
       const hit = await cache.get(t.key);
       if (hit) return hit;
-      const doc = t.tg.msg ? await msgDoc(t.tg) : (docs || await profileDocs()).find((d) => d.id.toString() === t.tg.doc);
+      const find = (list) => list.find((d) => d.id.toString() === t.tg.doc);
+      let doc = t.tg.msg ? await msgDoc(t.tg) : find(docs || await profileDocsCached());
+      if (!doc && !t.tg.msg && !docs) doc = find(await profileDocsCached(true)); // трек могли добавить только что
       if (!doc) throw new Error('Трека больше нет в профиле');
-      const buf = await client.downloadMedia(doc, {
+      const get = (d) => client.downloadMedia(d, {
         partSizeKb: partKb || 512, // по умолчанию в GramJS 128 КБ за запрос — в 4 раза больше пауз между кусками
         progressCallback: (got, total) => { if (onProgress) onProgress(Number(total) ? Number(got) / Number(total) : 0); },
       });
+      let buf;
+      try { buf = await get(doc); } catch (e) {
+        // file_reference из запомненного списка устарел — свежий список и ещё одна попытка
+        if (t.tg.msg || docs || !/FILE_REFERENCE/.test((e && (e.errorMessage || e.message)) || '')) throw e;
+        doc = find(await profileDocsCached(true));
+        if (!doc) throw new Error('Трека больше нет в профиле');
+        buf = await get(doc);
+      }
       if (!buf || !buf.length) throw new Error('Пустой файл');
       const b = new Blob([buf], { type: t.mime || 'audio/mpeg' });
       await cache.put(t.key, b).catch((e) => console.warn('Кэш Telegram:', e));
@@ -397,6 +461,7 @@
     on(cb) { subs.add(cb); return () => subs.delete(cb); },
     resume, login, submit, cancel, logout,
     sync, saved, blob, prefetch, search, add, forget,
+    get loggingIn() { return !!run; }, // идёт вход по номеру (а не подключение сохранённой сессии)
     get prefetching() { return pf.run ? { done: pf.done, total: pf.total } : null; },
     cachedKeys,
     cached: async (key) => !!(await cache.get(key)),
