@@ -14,6 +14,11 @@
     lyrics: 'M4 5h16M4 10h16M4 15h10M4 20h7',
     mic: 'M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3',
     close: 'M6 6l12 12M18 6 6 18',
+    eq: 'M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6',
+    fx: 'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z',
+    look: 'M12 3a9 9 0 1 0 0 18c1 0 1.5-.8 1.5-1.5 0-1.2-1-1.5-1-2.5 0-.8.7-1.5 1.5-1.5H16a5 5 0 0 0 5-5c0-4.1-4-7.5-9-7.5z',
+    keys: 'M3 7h18v10H3zM7 11h.01M11 11h.01M15 11h.01M8 14h8',
+    gear: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z',
   };
 
   // ---------- Кнопки в панели плеера ----------
@@ -277,6 +282,60 @@
   S.on('library', soon);
   S.on('track', soon);
   render();
-  // обложка подгружается после события трека
-  new MutationObserver(() => { if (st.open) head(S.cur()); }).observe($('cover-img'), { attributes: true, attributeFilter: ['src'] });
+
+  // ---------- Настройки окном с разделами (широкое окно) ----------
+  // Эквалайзер, Эффекты и Темы на ПК открываются не вкладкой, а окном поверх текущего экрана.
+  // Панели переносятся в окно на время показа и возвращаются на место при закрытии.
+  const wide = () => matchMedia('(min-width: 821px)').matches;
+  const SECS = [['eq', 'Эквалайзер', IC.eq], ['fx', 'Эффекты', IC.fx], ['themes', 'Внешний вид', IC.look], ['keys', 'Клавиши', IC.keys]];
+  const gear = document.createElement('button');
+  gear.className = 'tab dk-gear';
+  gear.dataset.label = 'Настройки';
+  gear.innerHTML = '<svg class="tab-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="' + IC.gear + '"/></svg>Настройки';
+  $('tabs').after(gear);
+  const md = document.createElement('div');
+  md.className = 'dset';
+  md.innerHTML = '<div class="dset-box" role="dialog" aria-label="Настройки"><nav class="dset-nav"><h2>Настройки</h2>' +
+    SECS.map(([id, l, ic]) => '<button data-sec="' + id + '">' + svg(ic) + l + '</button>').join('') +
+    '</nav><div class="dset-body"><header class="dset-top"><h3></h3><button class="icon-btn" data-x title="Закрыть (Esc)">' + svg(IC.close) + '</button></header>' +
+    '<section class="panel dset-keys" id="dset-keys">' +
+    [['Пробел', 'Пауза / играть'], ['← / →', 'Перемотка на 5 секунд'], ['Ctrl + ← / →', 'Предыдущий / следующий трек'], ['Esc', 'Закрыть окно, текст или меню']]
+      .map(([k, d]) => '<div class="dset-key"><span>' + d + '</span><kbd>' + k + '</kbd></div>').join('') + '</section></div></div>';
+  document.body.appendChild(md);
+  const mbody = md.querySelector('.dset-body');
+  const homes = ['themes', 'fx', 'eq'].map((id) => { const el = $('panel-' + id); return [el, el.nextElementSibling]; }); // порядок важен для возврата
+  let sec = null, back = 'home';
+  function openSet(id) {
+    if (!sec) homes.slice().reverse().forEach(([el]) => mbody.appendChild(el));
+    sec = id;
+    md.classList.add('show');
+    md.querySelectorAll('[data-sec]').forEach((b) => b.classList.toggle('on', b.dataset.sec === id));
+    mbody.querySelectorAll('.panel').forEach((el) => el.classList.toggle('dset-on', el.id === 'panel-' + id || el.id === 'dset-' + id));
+    md.querySelector('.dset-top h3').textContent = SECS.find((x) => x[0] === id)[1];
+    gear.classList.add('active');
+  }
+  function closeSet() {
+    if (!sec) return;
+    sec = null;
+    md.classList.remove('show');
+    gear.classList.remove('active');
+    homes.forEach(([el, next]) => { el.classList.remove('dset-on'); next.before(el); });
+  }
+  gear.onclick = () => (sec ? closeSet() : openSet('eq'));
+  md.addEventListener('click', (e) => {
+    if (e.target === md || e.target.closest('[data-x]')) { closeSet(); return; }
+    const b = e.target.closest('[data-sec]');
+    if (b) openSet(b.dataset.sec);
+  });
+  window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && sec && !st.open) closeSet(); });
+  // вкладка настроек в широком окне — открываем окно, а экран под ним оставляем прежним
+  S.on('tab', () => {
+    const t = S.settings.tab;
+    if (!['eq', 'fx', 'themes'].includes(t)) { back = t; return; }
+    if (!wide()) { closeSet(); return; }
+    S.showTab(back === t ? 'home' : back);
+    openSet(t);
+  });
+  window.addEventListener('resize', () => { if (sec && !wide()) closeSet(); });
+  if (['eq', 'fx', 'themes'].includes(S.settings.tab) && wide()) S.showTab('home');
 })();
