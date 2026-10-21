@@ -258,10 +258,20 @@
         '<button class="btn" data-h="files">Выбрать файлы</button></div>';
     }
 
-    if (recent.length) {
-      h += '<h2 class="h-title">Недавно играли</h2><div class="h-row">' + recent.map((t) =>
-        '<button class="h-card" data-play="' + esc(t.key) + '" data-from="recent">' + cardArt(t, true) + '<span class="h-ct">' + esc(t.title) + '</span><span class="h-ca">' + esc(t.artist) + '</span></button>').join('') + '</div>';
+    // быстрые плитки: «Любимые» и последние треки
+    const likedN = (pls.find((p) => p.id === LIKED) || { keys: [] }).keys.length;
+    if (tr.length) {
+      h += '<div class="h-quick"><button class="h-q" data-h="liked"><span class="h-qa liked">' + svg(IC.heart) + '</span><span><b>Любимые</b><small>' + likedN + ' ' + plural(likedN, 'трек', 'трека', 'треков') + '</small></span></button>' +
+        recent.slice(0, 5).map((t) => '<button class="h-q" data-play="' + esc(t.key) + '" data-from="recent">' + cardArt(t) + '<span><b>' + esc(t.title) + '</b><small>' + esc(t.artist) + '</small></span></button>').join('') + '</div>';
     }
+    const old = Object.keys(stats.t).filter((k) => stats.t[k].n >= 2 && Date.now() - stats.t[k].last > 7 * 864e5)
+      .sort((a, b) => stats.t[a].last - stats.t[b].last).map(byKey).filter(Boolean).slice(0, 12);
+    const fresh = tr.slice(-12).reverse();
+    const topRow = Object.keys(stats.t).filter((k) => stats.t[k].n).sort((a, b) => stats.t[b].n - stats.t[a].n).map(byKey).filter(Boolean).slice(0, 12);
+    const row = (title, list, from) => list.length ? '<h2 class="h-title">' + title + '</h2><div class="h-row">' + list.map((t) =>
+      '<button class="h-card" data-play="' + esc(t.key) + '" data-from="' + from + '">' + cardArt(t, true) + '<span class="h-ct">' + esc(t.title) + '</span><span class="h-ca">' + esc(t.artist) + '</span></button>').join('') + '</div>' : '';
+    h += row('Сейчас слушаешь', recent.slice(5), 'recent') + row('Чаще всего', topRow, 'topRow') + row('Вернуться к', old, 'old') + row('Новое в медиатеке', fresh, 'fresh');
+    home._lists = { old: old.map((t) => t.key), fresh: fresh.map((t) => t.key), topRow: topRow.map((t) => t.key) };
 
     h += '<h2 class="h-title">Плейлисты</h2><div class="h-row">' +
       '<button class="h-card" data-h="liked"><div class="h-art big liked">' + svg(IC.heart) + '</div><span class="h-ct">Любимые</span><span class="h-ca">' +
@@ -301,7 +311,7 @@
     if (!el) return;
     if (el.dataset.mood) { mood = el.dataset.mood; ls.set('mood', mood); startWave(); return; }
     if (el.dataset.play) {
-      const list = el.dataset.from === 'top' ? home._top : home._recent;
+      const list = el.dataset.from === 'top' ? home._top : (home._lists || {})[el.dataset.from] || home._recent;
       wave = false;
       S.play(list, list.indexOf(el.dataset.play), false);
       return;
@@ -377,7 +387,6 @@
     const t = S.cur();
     $('np-from').textContent = wave ? 'Моя волна' : t ? (t.album || t.folder || 'Медиатека') : '';
     syncNext();
-    if (lyr.open) loadLyrics();
   });
 
   function closePlayer() {
@@ -641,10 +650,9 @@
   }
 
   // ---------- Тексты песен (LRCLIB — открытая база, синхронизация по строкам) ----------
-  const lyr = { open: false, key: null, lines: null, plain: '', raf: 0, cur: -1 };
   // поиск и кэш текстов — общий модуль js/lyrics.js (ПК и телефон)
   const L = window.SquadLyrics;
-  const parseLrc = L.parse, fetchLyrics = L.get;
+  const fetchLyrics = L.get;
 
   // Фоновая загрузка текстов для всей медиатеки (по одному запросу, без спешки)
   const lyrAuto = { on: ls.get('lyrAuto', true), run: false, done: 0, total: 0, found: 0 };
@@ -675,86 +683,10 @@
   window.addEventListener('online', lyrSoon);
   let lyrUI = () => {};
 
-  let lyrBody = null;
-  // kara — сразу в режиме караоке: голос убран, текст крупно. Закрыли лист — голос возвращается
+  // Текст на весь экран — общий с ПК вид из js/desk.js (обложка, текст, кнопки, сдвиг ±0,1 с).
+  // kara — сразу в режиме караоке: голос убран, текст крупно. Закрыли — голос возвращается
   function openLyrics(kara) {
-    lyr.open = true;
-    let k = false;
-    // кнопка живёт в самом листе, а не в прокрутке текста (там сверху затухание)
-    const kb = document.createElement('button');
-    kb.className = 'chip kara-btn';
-    kb.innerHTML = svg(IC.mic) + '<span>Караоке</span>';
-    const setKara = (on) => {
-      k = on;
-      S.setFx('karaoke', on ? 1 : 0);
-      sheet.classList.toggle('kara', on);
-      kb.classList.toggle('on', on);
-      kb.lastChild.textContent = on ? 'Голос убран' : 'Караоке';
-      lyr.cur = -1; // перецентрировать строку под новый размер шрифта
-    };
-    kb.onclick = () => setKara(!k);
-    lyrBody = openSheet('Текст', '<div class="lyr"></div>', 'tall lyr-sheet', () => {
-      lyr.open = false; cancelAnimationFrame(lyr.raf); kb.remove();
-      if (k) { S.setFx('karaoke', 0); sheet.classList.remove('kara'); }
-    });
-    sheet.append(kb);
-    if (kara) setKara(true);
-    lyrBody.addEventListener('click', (e) => {
-      if (e.target.closest('[data-lyr="retry"]')) {
-        const t = S.cur();
-        if (t) { L.forget(t.key); loadLyrics(); }
-        return;
-      }
-      const l = e.target.closest('[data-t]');
-      if (l) S.seek(+l.dataset.t);
-    });
-    loadLyrics();
-  }
-  async function loadLyrics() {
-    const box = lyrBody && lyrBody.querySelector('.lyr');
-    const t = S.cur();
-    if (!box) return;
-    cancelAnimationFrame(lyr.raf);
-    if (!t) { box.innerHTML = '<p class="hint">Ничего не играет</p>'; return; }
-    sheet.querySelector('.sheet-title').textContent = t.title;
-    lyr.key = t.key; lyr.lines = null; lyr.cur = -1;
-    box.innerHTML = '<div class="tg-spin"></div>';
-    try {
-      const r = await fetchLyrics(t);
-      if (lyr.key !== t.key || !lyr.open) return;
-      if (r.none) { box.innerHTML = '<p class="hint">Текст для этого трека не нашёлся ни в файле, ни в LRCLIB, ни в lyrics.ovh.</p><button class="chip" data-lyr="retry">Искать снова</button>'; return; }
-      if (r.instrumental && !r.synced && !r.plain) { box.innerHTML = '<p class="hint">Это инструментальный трек.</p>'; return; }
-      const lines = parseLrc(r.synced);
-      if (lines.length) {
-        lyr.lines = lines;
-        box.innerHTML = lines.map((l, i) => '<p data-i="' + i + '" data-t="' + l.t + '">' + (esc(l.text) || '♪') + '</p>').join('');
-        tickLyrics();
-      } else {
-        box.innerHTML = '<div class="lyr-plain">' + esc(r.plain).replace(/\n/g, '<br>') + '</div>';
-      }
-      if (r.src) box.insertAdjacentHTML('beforeend', '<p class="lyr-src">Текст: ' + esc(r.src) + '</p>');
-    } catch (e) {
-      if (lyr.key === t.key) box.innerHTML = '<p class="hint">Не удалось загрузить текст. Проверьте интернет.</p>';
-    }
-  }
-  function tickLyrics() {
-    if (!lyr.open || !lyr.lines || !lyrBody) return;
-    const now = S.time().cur + 0.25;
-    let i = -1;
-    for (let k = 0; k < lyr.lines.length && lyr.lines[k].t <= now; k++) i = k;
-    if (i !== lyr.cur) {
-      const box = lyrBody.querySelector('.lyr');
-      const prev = box.querySelector('.on');
-      if (prev) prev.classList.remove('on');
-      const el = box.querySelector('[data-i="' + i + '"]');
-      if (el) {
-        el.classList.add('on');
-        // scrollIntoView прокрутил бы и саму страницу — крутим только лист
-        lyrBody.scrollTo({ top: el.offsetTop - lyrBody.clientHeight / 2 + el.offsetHeight / 2, behavior: lyr.cur < 0 ? 'auto' : 'smooth' });
-      }
-      lyr.cur = i;
-    }
-    lyr.raf = requestAnimationFrame(tickLyrics);
+    if (window.SquadFull) window.SquadFull.open(!!kara);
   }
 
   // ---------- Настройки: внешний вид плеера ----------
@@ -1815,8 +1747,31 @@
     else if (e.target.id === 'audd-try') openRecognize();
   });
 
+  // ---------- Настройки по разделам: внешний вид, музыка, приложение ----------
+  const SETS = [['look', 'Внешний вид'], ['music', 'Музыка'], ['app', 'Приложение']];
+  const SEC_OF = { 'Плеер': 'look', 'Фон и обложки': 'look', 'Свой акцент': 'look', 'Обложки и названия': 'music', 'Тексты песен': 'music', 'Распознавание песни': 'music', 'Last.fm': 'music' };
+  const setP = $('panel-themes');
+  const setSeg = document.createElement('div');
+  setSeg.className = 'seg set-seg';
+  setSeg.innerHTML = SETS.map(([id, l]) => '<button data-s="' + id + '">' + l + '</button>').join('');
+  setP.prepend(setSeg);
+  function setSec(id) {
+    ls.set('setSec', id);
+    setSeg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.s === id));
+    [...setP.children].forEach((c) => {
+      if (c === setSeg) return;
+      const h = c.querySelector('h3');
+      const sec = c.classList.contains('themes') ? 'look' : SEC_OF[h ? h.textContent.trim() : ''] || 'app';
+      c.classList.toggle('set-off', sec !== id);
+    });
+    setP.scrollTop = 0;
+  }
+  setSeg.addEventListener('click', (e) => { const b = e.target.closest('[data-s]'); if (b) setSec(b.dataset.s); });
+  setSec(ls.get('setSec', 'look'));
+
   // ---------- Кнопка «Назад» Android ----------
   function back() {
+    if (window.SquadFull && window.SquadFull.isOpen()) { window.SquadFull.close(); return; }
     if (closeWrap()) return;
     if (closeSheet()) return;
     if ($('dialog').classList.contains('show')) { $('dialog-cancel').click(); return; }

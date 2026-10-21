@@ -675,7 +675,29 @@ html.desk .dl-head { padding-top: 40px; } /* под кнопками окна */
 .dl-off button:hover { background: color-mix(in srgb, var(--text) 12%, transparent); }
 .dl-off span { min-width: 52px; text-align: center; color: var(--muted); font-variant-numeric: tabular-nums; }
 .dl-main { position: relative; flex: 1; min-height: 0; display: flex; }
-.dl-side { display: none; }
+.dl-tools { display: flex; align-items: center; gap: 10px; }
+.dl-side { display: flex; flex-direction: column; }
+@media (max-width: 999px) {
+  /* узкое окно и телефон: текст сверху, внизу сдвиг, «Караоке», перемотка и кнопки */
+  .dl-main { flex-direction: column; }
+  .dl-side { order: 2; gap: 12px; padding: 8px 20px calc(env(safe-area-inset-bottom, 0px) + 18px); }
+  .dl-cover, .dl-np { display: none; }
+  .dl-tools { justify-content: space-between; }
+  .dl-seek div { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .dl-ctl { display: flex; align-items: center; justify-content: space-between; padding: 0 6px; }
+  .dl-ctl .icon-btn { width: 46px; height: 46px; position: relative; }
+  .dl-ctl .icon-btn svg { width: 22px; height: 22px; }
+  .dl-ctl .play-btn { width: 62px; height: 62px; }
+  .dl-ctl .play-btn svg { width: 26px; height: 26px; }
+  .dl-body { padding: 22vh 22px; }
+}
+@media (max-width: 600px) {
+  .dl-head { gap: 12px; padding: 14px 16px; }
+  .dl-art { width: 46px; height: 46px; }
+  .dl-lines p[data-t] { font-size: 25px; margin-bottom: 14px; }
+  .dl.kara .dl-lines p[data-t] { font-size: 30px; }
+}
+html.apk .dl-head { padding-top: calc(env(safe-area-inset-top, 0px) + 14px); }
 .dl-body { min-width: 0; }
 @media (min-width: 1000px) {
   .dl-head .dl-art, .dl-head .dl-meta > * { visibility: hidden; }
