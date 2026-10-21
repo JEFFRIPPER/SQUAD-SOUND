@@ -742,3 +742,105 @@ html.desk .dl-head { padding-top: 40px; } /* под кнопками окна */
 @media (min-width: 821px) {
   html:not(.apk) .now .cover { width: min(100%, max(160px, 100vh - 490px)); align-self: center; }
 }
+
+/* ---------- ПК: колонка иконок слева, плеер полосой внизу окна (общий приём Dotify/Liner, свой код) ---------- */
+@media (min-width: 821px) {
+  html:not(.apk) .topbar { width: 76px; padding: 16px 10px; gap: 18px; align-items: center; overflow: visible; position: relative; z-index: 5; }
+  html:not(.apk) .brand { flex-direction: column; padding: 0; gap: 12px; }
+  html:not(.apk) .brand-name { display: none; }
+  html:not(.apk) .brand-logo { width: 40px; height: 40px; }
+  html:not(.apk) .tg-link { margin: 0; }
+  html:not(.apk) .tabs { align-items: center; gap: 6px; }
+  html:not(.apk) .tab { width: 50px; height: 50px; padding: 0; justify-content: center; border-radius: 16px; font-size: 0; position: relative; overflow: visible; }
+  html:not(.apk) .tab-ic { width: 23px; height: 23px; }
+  /* подпись — всплывающей подсказкой справа от иконки */
+  html:not(.apk) .tab::after { content: attr(data-label); position: absolute; left: 60px; top: 50%; transform: translateY(-50%) translateX(-4px);
+    font-size: 13px; font-weight: 600; white-space: nowrap; padding: 6px 10px; border-radius: 10px; background: var(--card); color: var(--text);
+    border: 1px solid var(--line); opacity: 0; pointer-events: none; transition: opacity .15s, transform .15s; z-index: 50; }
+  html:not(.apk) .tab:hover::after { opacity: 1; transform: translateY(-50%); }
+  html:not(.apk) .update-banner { left: 88px; }
+
+  html:not(.apk) .layout { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+  html:not(.apk) .layout > .panel { grid-row: 1; grid-column: 1; }
+  /* над контентом — полоса под кнопки окна, за неё окно и таскается */
+  html.desk .layout { padding-top: 38px; -webkit-app-region: drag; }
+  html.desk .layout > * { -webkit-app-region: no-drag; }
+
+  html:not(.apk) .layout .now { grid-row: 2; grid-column: 1; display: grid !important; align-items: center; column-gap: 16px; row-gap: 0;
+    grid-template-columns: 58px minmax(0, 1fr) minmax(300px, 560px) minmax(0, 1fr);
+    grid-template-areas: "cover meta ctl acts" "cover meta seek vol";
+    padding: 10px 20px; border-left: 0; border-top: 1px solid var(--line); overflow: visible; }
+  html:not(.apk) .layout .now .cover { grid-area: cover; width: 58px; height: 58px; align-self: center; border-radius: 12px; box-shadow: none; cursor: pointer; }
+  html:not(.apk) .now .cover canvas { display: none; }
+  html:not(.apk) .now .cover-letter { font-size: 24px; }
+  html:not(.apk) .now .meta { grid-area: meta; text-align: left; min-width: 0; cursor: pointer; }
+  html:not(.apk) .now .meta .title { font-family: inherit; font-weight: 700; font-size: 15px; }
+  html:not(.apk) .now .meta .artist { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  html:not(.apk) .now .controls { grid-area: ctl; justify-content: center; gap: 8px; }
+  html:not(.apk) .now .controls .icon-btn { width: 38px; height: 38px; }
+  html:not(.apk) .now .controls svg { width: 19px; height: 19px; }
+  html:not(.apk) .now .play-btn { width: 44px; height: 44px; box-shadow: 0 6px 18px -8px var(--accent); }
+  html:not(.apk) .now .play-btn svg { width: 20px; height: 20px; }
+  html:not(.apk) .now .seek { grid-area: seek; display: flex; align-items: center; gap: 10px; }
+  html:not(.apk) .now .seek input { flex: 1; order: 2; }
+  html:not(.apk) .now .times { display: contents; font-size: 11px; color: var(--muted); }
+  html:not(.apk) .now #t-cur { order: 1; min-width: 34px; text-align: right; }
+  html:not(.apk) .now #t-dur { order: 3; min-width: 34px; }
+  html:not(.apk) .now .volume { grid-area: vol; justify-self: end; width: min(100%, 180px); }
+  html:not(.apk) .now .volume svg { width: 18px; height: 18px; }
+  html:not(.apk) .now .np-actions { grid-area: acts; justify-content: flex-end; flex-wrap: nowrap; gap: 6px; }
+  html:not(.apk) .now .np-actions .chip { padding: 4px 10px; font-size: 12px; white-space: nowrap; }
+  html:not(.apk) .now .quick { display: none; }
+}
+@media (min-width: 821px) and (max-width: 1180px) {
+  /* в узком окне у чипов остаются только иконки */
+  html:not(.apk) .now .np-actions .chip:has(svg) { font-size: 0; padding: 6px; }
+  html:not(.apk) .now .np-actions .chip svg { margin: 0; }
+}
+
+/* ---------- ПК: главная ---------- */
+html:not(.apk) #panel-home { padding: 24px 28px 40px; }
+.dh { display: flex; flex-direction: column; gap: 26px; max-width: 1400px; }
+.dh-head { display: flex; align-items: center; gap: 14px; }
+.dh-head h1 { margin: 0; font-size: 30px; font-weight: 800; letter-spacing: -.01em; }
+.dh-head h1 span { color: var(--accent); }
+.dh-me { background: none; border: 0; padding: 0; border-radius: 50%; }
+.dh-me .pf-ava { width: 46px; height: 46px; font-size: 18px; }
+.dh-wave { position: relative; overflow: hidden; display: flex; align-items: center; gap: 24px; padding: 30px 32px; border-radius: 26px;
+  background: linear-gradient(120deg, color-mix(in srgb, var(--accent) 38%, var(--card)), var(--card) 70%); border: 1px solid var(--line); }
+.dh-wave-bg { position: absolute; inset: -40px; background: center/cover no-repeat; filter: blur(50px) brightness(.45) saturate(1.4); opacity: .8; }
+.dh-wave-txt { position: relative; flex: 1; min-width: 0; }
+.dh-wave h2 { margin: 0; font-family: 'Squad', system-ui, sans-serif; font-weight: 400; font-size: 54px; line-height: 1; }
+.dh-wave p { margin: 8px 0 16px; color: color-mix(in srgb, var(--text) 75%, transparent); }
+.dh-moods { display: flex; gap: 8px; flex-wrap: wrap; }
+.dh-moods .chip { background: color-mix(in srgb, var(--bg) 45%, transparent); }
+.dh-moods .chip.on { background: var(--text); color: var(--bg); border-color: transparent; }
+.dh-play { position: relative; flex-shrink: 0; width: 96px; height: 96px; border-radius: 50%; border: 0; background: var(--text); color: var(--bg);
+  display: grid; place-items: center; box-shadow: 0 16px 40px -14px #000; transition: transform .2s; }
+.dh-play:hover { transform: scale(1.06); }
+.dh-play svg { width: 40px; height: 40px; fill: currentColor; stroke: none; margin-left: 5px; }
+.dh-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.dh-tile { display: flex; align-items: center; gap: 12px; padding: 0 12px 0 0; height: 60px; border: 0; border-radius: 12px; overflow: hidden; text-align: left;
+  background: color-mix(in srgb, var(--text) 6%, transparent); transition: background .15s; }
+.dh-tile:hover { background: color-mix(in srgb, var(--text) 12%, transparent); }
+.dh-tile > span:last-child { min-width: 0; display: flex; flex-direction: column; }
+.dh-tile b, .dh-card b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px; }
+.dh-tile small, .dh-card small { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dh-tart, .dh-art { display: grid; place-items: center; flex-shrink: 0; overflow: hidden; color: #fff; font-weight: 800; }
+.dh-tart { width: 60px; height: 60px; font-size: 22px; }
+.dh-tart.liked { background: var(--grad); }
+.dh-tart.liked svg { width: 26px; height: 26px; fill: #fff; stroke: none; }
+.dh-tart img, .dh-art img { width: 100%; height: 100%; object-fit: cover; }
+.dh-sec h2 { margin: 0 0 12px; font-size: 22px; font-weight: 800; }
+.dh-row { display: grid; grid-auto-flow: column; grid-auto-columns: 172px; gap: 16px; overflow-x: auto; padding-bottom: 6px; scrollbar-width: thin; }
+.dh-card { display: flex; flex-direction: column; gap: 2px; padding: 0; border: 0; background: none; text-align: left; min-width: 0; }
+.dh-art { width: 172px; height: 172px; border-radius: 16px; margin-bottom: 8px; font-size: 54px; transition: transform .2s, box-shadow .2s; }
+.dh-card:hover .dh-art { transform: translateY(-3px); box-shadow: 0 14px 30px -14px var(--accent); }
+.dh-card.on .dh-art { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dh-empty { padding: 30px; text-align: center; color: var(--muted); border: 1px dashed var(--line); border-radius: 18px; }
+@media (max-width: 820px) {
+  .dh-wave { flex-direction: column; align-items: flex-start; padding: 22px; }
+  .dh-wave h2 { font-size: 40px; }
+  .dh-play { width: 70px; height: 70px; }
+  .dh-head h1 { font-size: 24px; }
+}
