@@ -64,21 +64,36 @@
   const LICENSES = { by: 'CC BY', 'by-sa': 'CC BY-SA', 'by-nc': 'CC BY-NC', 'by-nd': 'CC BY-ND', 'by-nc-sa': 'CC BY-NC-SA', 'by-nc-nd': 'CC BY-NC-ND', cc0: 'CC0', pdm: 'Общественное достояние', sampling: 'CC Sampling+', 'nc-sampling': 'CC NC-Sampling+' };
   const SOURCES = { jamendo: 'Jamendo', wikimedia_audio: 'Wikimedia', freesound: 'Freesound', ccmixter: 'ccMixter' };
 
+  // Лучший файл трека: у источника бывают копии в других форматах (alt_files).
+  // Без потерь (FLAC/WAV) лучше всего, дальше — у кого выше битрейт. На телефоне гигантские файлы не берём.
+  const ANDROID_MAX = 40 * 1024 * 1024;
+  const PLAYABLE = /^(mp3|ogg|oga|opus|flac|wav|m4a|aac|webm)$/i;
+  const LOSSLESS = /^(flac|wav)$/i;
+  function best(a) {
+    const all = [{ url: a.url, filetype: a.filetype, bit_rate: a.bit_rate, filesize: a.filesize }].concat(Array.isArray(a.alt_files) ? a.alt_files : []);
+    const ok = all.filter((f) => f && f.url && (!f.filetype || PLAYABLE.test(f.filetype)) && !(isAndroid && Number(f.filesize) > ANDROID_MAX));
+    const score = (f) => (LOSSLESS.test(f.filetype || '') ? 1e9 : 0) + (Number(f.bit_rate) || 0);
+    return ok.reduce((m, f) => (score(f) > score(m) ? f : m), ok[0] || all[0]);
+  }
+
   function toResult(a) {
     if (!a || !a.url) return null;
+    const f = best(a);
+    const kbps = Math.round((Number(f.bit_rate) || 0) / 1000);
     return {
       key: 'web:' + a.id,
       id: a.id,
       title: a.title || 'Без названия',
       artist: a.creator || '',
       duration: a.duration ? Math.round(a.duration / 1000) : 0,
-      url: a.url,
+      url: f.url,
+      quality: LOSSLESS.test(f.filetype || '') ? String(f.filetype).toUpperCase() : kbps >= 32 ? kbps + ' кбит/с' : '',
       thumb: a.thumbnail || '',
       license: (LICENSES[a.license] || ('CC ' + String(a.license || '').toUpperCase())) + (a.license_version && !/cc0|pdm/.test(a.license) ? ' ' + a.license_version : ''),
       source: SOURCES[a.source] || SOURCES[a.provider] || a.source || a.provider || '',
       page: a.foreign_landing_url || '',
-      ext: a.filetype || '',
-      size: Number(a.filesize) || 0,
+      ext: f.filetype || a.filetype || '',
+      size: Number(f.filesize) || 0,
     };
   }
 
@@ -91,7 +106,6 @@
   }
 
   // ---------- Добавление ----------
-  const ANDROID_MAX = 40 * 1024 * 1024;
   const loading = new Map();
   function add(res) {
     if (loading.has(res.key)) return loading.get(res.key);

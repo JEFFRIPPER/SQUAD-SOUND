@@ -7,7 +7,6 @@
   const decks = [$('audio'), $('audio2')];
   const engine = new AudioEngine(decks[0], decks[1]);
   window.squadEngine = engine; // для отладки из DevTools
-  engine.lean = !!(window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === 'android'); // .exe не меняем
   const A = () => engine.audio; // активная дека
   const AUDIO_RE = /\.(mp3|flac|wav|ogg|oga|m4a|aac|opus|webm|mp4)$/i; // WMA Chromium не играет
   const cap = window.Capacitor;
@@ -914,8 +913,8 @@
     const m = meas[i];
     const db = loud[key] != null ? loud[key] : m.key === key && m.n >= 20 ? 10 * Math.log10(m.sum / m.n) : loudAvg();
     if (db == null || !isFinite(db)) return 1;
-    // усиливаем не больше чем на 6 дБ и только с лимитером, иначе громкий пик захрипит
-    const g = Math.max(-12, Math.min(engine.state.limiter ? 6 : 0, NORM_TARGET - db));
+    // только убавляем: подъём громкости упирал пики в лимитер, и звук «резало»
+    const g = Math.max(-12, Math.min(0, NORM_TARGET - db));
     return Math.pow(10, g / 20);
   }
   // на деку пришёл другой трек: замер прежнего (если набралось ~10 с звука) запоминаем, счётчик — с нуля
@@ -1294,6 +1293,7 @@
   function syncCrossfade() {
     setRange($('crossfade'), settings.crossfade);
     $('crossfade-val').textContent = settings.crossfade ? settings.crossfade + ' с' : 'выкл';
+    engine.setOverlap(settings.crossfade > 0);
   }
 
   // ---------- Эквалайзер ----------
@@ -1719,7 +1719,7 @@
       else { const h = hueOf(r.artist + r.title); art.style.background = 'linear-gradient(135deg,hsl(' + h + ',70%,50%),hsl(' + ((h + 50) % 360) + ',80%,40%))'; art.textContent = (r.title[0] || '?').toUpperCase(); }
       if (art.firstChild && art.firstChild.tagName === 'IMG') art.firstChild.onerror = () => { art.textContent = (r.title[0] || '?').toUpperCase(); };
       li.querySelector('.t-title').textContent = r.title;
-      li.querySelector('.t-artist').textContent = [r.artist, r.duration ? fmt(r.duration) : '', r.source, r.license].filter(Boolean).join(' · ');
+      li.querySelector('.t-artist').textContent = [r.artist, r.duration ? fmt(r.duration) : '', r.quality, r.source, r.license].filter(Boolean).join(' · ');
       frag.appendChild(li);
     });
     const tail = document.createElement('li');
