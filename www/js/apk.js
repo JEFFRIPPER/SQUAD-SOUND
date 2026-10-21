@@ -41,7 +41,6 @@
     close: 'M6 6l12 12M18 6 6 18',
     more: 'M12 5h.01M12 12h.01M12 19h.01',
     share: 'M18 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 22a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM8.6 13.5l6.8 4M15.4 6.5l-6.8 4',
-    together: 'M3 14v-2a9 9 0 0 1 18 0v2M3 14h3v6H4a1 1 0 0 1-1-1zM21 14h-3v6h2a1 1 0 0 0 1-1z',
     image: 'M4 4h16v16H4zM4 16l5-5 4 4 3-3 4 4M15 9h.01',
   };
 
@@ -288,8 +287,7 @@
     h += '<h2 class="h-title">Источники</h2><div class="h-tiles">' +
       tile('telegram', IC.tg, 'Telegram', 'Музыка из профиля') + tile('online', IC.globe, 'Онлайн', 'Открытые источники') +
       tile('artists', IC.mic, 'Исполнители', '') + tile('folders', IC.folder, 'Папки', '') +
-      '<button class="h-tile" data-h="rz">' + svg(IC.wave) + '<span><b>Что играет?</b><small>Узнать песню вокруг</small></span></button>' +
-      (window.SquadShare ? '<button class="h-tile" data-h="together">' + svg(IC.together) + '<span><b>Слушать вместе</b><small>Приглашение от друга</small></span></button>' : '') + '</div>';
+      '<button class="h-tile" data-h="rz">' + svg(IC.wave) + '<span><b>Что играет?</b><small>Узнать песню вокруг</small></span></button></div>';
 
     if (stats.total) {
       h += '<h2 class="h-title">Статистика</h2>' + wrapCards() + '<div class="h-stats">' +
@@ -325,7 +323,6 @@
     if (h === 'wrap') { openWrap(el.dataset.m); return; }
     if (h === 'import') { openImport(); return; }
     if (h === 'rz') { openRecognize(); return; }
-    if (h === 'together') { SquadShare.open(S.cur(), 'together'); return; }
     if (h === 'profile') { S.showTab('profile'); return; }
     if (h === 'wave') { if (wave && S.playing()) S.togglePlay(); else startWave(); }
     else if (h === 'liked') { likedList(); S.savePlaylists(); go('library'); S.openLib('playlists', LIKED); }
@@ -572,8 +569,7 @@
       '<button data-m="edit">' + svg(IC.lyrics) + 'Название, исполнитель, обложка</button>' +
       '<button data-m="cover">' + svg(IC.image) + 'Своя обложка</button>' +
       '<button data-m="queue">' + svg(IC.queue) + 'Очередь</button>' +
-      (window.SquadShare ? '<button data-m="share">' + svg(IC.share) + 'Поделиться картинкой</button>' +
-        '<button data-m="together">' + svg(IC.together) + 'Слушать вместе с другом</button>' : '') +
+      (window.SquadShare ? '<button data-m="share">' + svg(IC.share) + 'Поделиться картинкой</button>' : '') +
       '<button data-m="sound">' + svg(IC.sound) + 'Эквалайзер и эффекты целиком</button></div>');
     body.addEventListener('click', (e) => {
       const b = e.target.closest('[data-m]');
@@ -583,7 +579,7 @@
       else if (k === 'cover') openCoverSheet();
       else if (k === 'kara') openLyrics(true);
       else if (k === 'edit') { closeSheet(); const t = S.cur(); if (t) S.editTrack(t.key); }
-      else if (k === 'share' || k === 'together') { closeSheet(); SquadShare.open(S.cur(), k === 'together' ? 'together' : 'card'); }
+      else if (k === 'share') { closeSheet(); SquadShare.open(S.cur()); }
       else {
         closeSheet(); closePlayer();
         setTimeout(() => { if (k === 'queue') { go('library'); S.openLib('queue'); } else go('sound'); }, 0);
@@ -1679,7 +1675,6 @@
     native('MusicScanner', 'minimize').catch(() => {});
   }
   window.addEventListener('squadBack', back);
-  window.SquadApkGo = go; // share.js: «Слушать вместе» уводит в онлайн-поиск
 
   // ---------- Старт ----------
   const t0 = S.settings.tab;
