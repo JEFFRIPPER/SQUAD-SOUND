@@ -3,6 +3,7 @@
   "appName": "SQUAD SOUND",
   "webDir": "www",
   "android": {
-    "backgroundColor": "#070203"
+    "backgroundColor": "#070203",
+    "webContentsDebuggingEnabled": false
   }
 }

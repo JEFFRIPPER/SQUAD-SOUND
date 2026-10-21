@@ -58,7 +58,7 @@ public class SquadUpdaterPlugin extends Plugin {
         if ("ready".equals(state) && ver.equals(version) && apk().exists()) { call.resolve(snapshot()); return; }
         state = "downloading";
         done = 0;
-        total = call.getLong("size", 0L);
+        total = call.getData().optLong("size", 0L); // getLong не принимает число из JS как Integer/Double
         error = "";
         version = ver;
         call.resolve(snapshot());

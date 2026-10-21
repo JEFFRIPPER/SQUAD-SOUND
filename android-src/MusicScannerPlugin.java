@@ -83,6 +83,8 @@ public class MusicScannerPlugin extends Plugin {
     public void deleteFile(PluginCall call) {
         String s = call.getString("uri", "");
         if (!s.startsWith("content://media/")) { call.reject("Это не файл из медиатеки"); return; }
+        // второй запрос, пока на экране вопрос про первый, — отклоняем, иначе окна наслаивались
+        if (deleteCall != null) { call.reject("Сначала ответьте на вопрос об удалении предыдущего файла"); return; }
         Uri uri = Uri.parse(s);
         if (Build.VERSION.SDK_INT >= 30) {
             // Android 11+: система сама спрашивает «Удалить файл?»
@@ -226,7 +228,7 @@ public class MusicScannerPlugin extends Plugin {
     @PluginMethod
     public void artwork(PluginCall call) {
         String uri = call.getString("uri");
-        long albumId = call.getLong("albumId", 0L);
+        long albumId = call.getData().optLong("albumId", 0L); // getLong не принимает число, пришедшее из JS как Integer/Double
         int size = call.getInt("size", 160);
         getBridge().execute(() -> {
             Bitmap bmp = null;
@@ -235,20 +237,40 @@ public class MusicScannerPlugin extends Plugin {
                 if (Build.VERSION.SDK_INT >= 29 && uri != null) {
                     bmp = cr.loadThumbnail(Uri.parse(uri), new Size(size, size), null);
                 }
-            } catch (Exception ignored) {}
+            } catch (Throwable ignored) {} // Throwable: огромная обложка давала OutOfMemoryError и роняла приложение
             if (bmp == null && albumId > 0) {
-                try (InputStream in = cr.openInputStream(ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), albumId))) {
-                    if (in != null) bmp = BitmapFactory.decodeStream(in);
-                } catch (Exception ignored) {}
+                try {
+                    bmp = decodeSampled(cr, ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), albumId), size);
+                } catch (Throwable ignored) {}
             }
             JSObject r = new JSObject();
-            if (bmp != null) {
-                if (bmp.getWidth() > size * 2) bmp = Bitmap.createScaledBitmap(bmp, size, size * bmp.getHeight() / bmp.getWidth(), true);
-                ByteArrayOutputStream out = new ByteArrayOutputStream();
-                bmp.compress(Bitmap.CompressFormat.JPEG, 88, out);
-                r.put("data", "data:image/jpeg;base64," + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP));
-            }
+            try {
+                if (bmp != null) {
+                    if (bmp.getWidth() > size * 2) bmp = Bitmap.createScaledBitmap(bmp, size, size * bmp.getHeight() / bmp.getWidth(), true);
+                    ByteArrayOutputStream out = new ByteArrayOutputStream();
+                    bmp.compress(Bitmap.CompressFormat.JPEG, 88, out);
+                    r.put("data", "data:image/jpeg;base64," + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP));
+                }
+            } catch (Throwable ignored) {}
             call.resolve(r);
         });
+    }
+
+    // Картинка с уменьшением при чтении: сначала только размеры, потом декодируем в 2^n раз меньше
+    private static Bitmap decodeSampled(ContentResolver cr, Uri u, int size) throws Exception {
+        BitmapFactory.Options o = new BitmapFactory.Options();
+        o.inJustDecodeBounds = true;
+        try (InputStream in = cr.openInputStream(u)) {
+            if (in == null) return null;
+            BitmapFactory.decodeStream(in, null, o);
+        }
+        if (o.outWidth <= 0 || o.outHeight <= 0) return null;
+        int s = 1;
+        while (o.outWidth / (s * 2) >= size && o.outHeight / (s * 2) >= size) s *= 2;
+        BitmapFactory.Options d = new BitmapFactory.Options();
+        d.inSampleSize = s;
+        try (InputStream in = cr.openInputStream(u)) {
+            return in == null ? null : BitmapFactory.decodeStream(in, null, d);
+        }
     }
 }

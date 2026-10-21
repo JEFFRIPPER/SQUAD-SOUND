@@ -215,14 +215,32 @@
 
   // ---------- Ogg ----------
   async function parseOgg(src, res) {
-    const b = await src.read(0, Math.min(src.size, 4 * 1024 * 1024));
+    // Комментарии лежат во втором пакете, обычно в первых килобайтах. Читаем с 64 КБ и удваиваем до 4 МБ
+    // только если пакет с обложкой не влез (раньше сразу читали 4 МБ на каждый файл)
+    const cap = Math.min(src.size, 4 * 1024 * 1024);
+    for (let len = Math.min(cap, 64 * 1024); ; len = Math.min(cap, len * 2)) {
+      const c = oggComments(await src.read(0, len));
+      if (c) {
+        if (ascii(c, 0, 7) === '\x03vorbis') parseVorbis(c, 7, res);
+        else if (ascii(c, 0, 8) === 'OpusTags') parseVorbis(c, 8, res);
+        return;
+      }
+      if (c === null || len >= cap) return; // null — это не Ogg с комментариями, больше читать незачем
+    }
+  }
+  // второй пакет потока; undefined — данных не хватило, null — его нет
+  function oggComments(b) {
     const packets = [];
     let cur = [], o = 0;
-    while (o + 27 <= b.length && packets.length < 2 && ascii(b, o, 4) === 'OggS') {
+    while (packets.length < 2) {
+      if (o + 27 > b.length) return undefined;
+      if (ascii(b, o, 4) !== 'OggS') return null;
       const nseg = b[o + 26];
+      if (o + 27 + nseg > b.length) return undefined;
       let d = o + 27 + nseg;
       for (let i = 0; i < nseg; i++) {
         const l = b[o + 27 + i];
+        if (d + l > b.length) return undefined; // страница обрезана концом прочитанного куска
         cur.push(b.subarray(d, d + l));
         d += l;
         if (l < 255) {
@@ -236,10 +254,7 @@
       }
       o = d;
     }
-    const c = packets[1];
-    if (!c) return;
-    if (ascii(c, 0, 7) === '\x03vorbis') parseVorbis(c, 7, res);
-    else if (ascii(c, 0, 8) === 'OpusTags') parseVorbis(c, 8, res);
+    return packets[1];
   }
 
   // ---------- MP4 / M4A ----------

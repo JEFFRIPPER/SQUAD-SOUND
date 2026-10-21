@@ -49,6 +49,7 @@
         const req = fn(tx.objectStore('meta'));
         tx.oncomplete = () => res(req && req.result);
         tx.onerror = () => rej(tx.error);
+        tx.onabort = () => rej(tx.error || new Error('IndexedDB: транзакция прервана'));
       });
     };
     return {
@@ -1459,7 +1460,7 @@
         const list = (r && r.tracks) || [];
         const alive = new Set(list.map((x) => x.uri));
         // треки, которых больше нет на телефоне
-        tracks.filter((t) => t.uri && !alive.has(t.uri)).forEach((t) => removeTrack(t.key, true));
+        removeTracks(tracks.filter((t) => t.uri && !alive.has(t.uri)).map((t) => t.key), true);
         found = list.map((x) => makeTrack(x.name || x.title || 'Трек', {
           uri: x.uri, albumId: x.albumId, title: x.title, artist: x.artist, album: x.album, genre: x.genre,
           year: x.year, no: x.no, disc: x.disc, folder: x.folder,
@@ -1493,9 +1494,12 @@
     return Object.assign(t, { key: d.key, folder: 'Онлайн/' + (d.source || 'Open'), web: { license: d.license, source: d.source } });
   }
 
+  // новый запрос заменяет идущий: ответ старого просто выбрасываем (раньше новый поиск игнорировался, пока шёл старый)
+  let webTok = 0;
   async function webSearch(q, more) {
     q = q.trim();
-    if (!WEB || !q || onl.busy) return;
+    if (!WEB || !q || (more && onl.busy)) return;
+    const tok = ++webTok;
     if (!more) Object.assign(onl, { q, results: [], page: 1, more: false, webMore: true, tgNext: null });
     onl.busy = true; onl.error = '';
     renderLib();
@@ -1507,7 +1511,7 @@
         useTg ? TG.search(q, more ? onl.tgNext : null).then((r) => r, (e) => ({ err: e })) : null,
         useWeb ? WEB.search(q, more ? onl.page + 1 : 1).then((r) => r, (e) => ({ err: e })) : null,
       ]);
-      if (q !== onl.q) return;
+      if (tok !== webTok) return;
       const seen = new Set(onl.results.map((x) => x.key));
       const take = (list) => { onl.results = onl.results.concat(list.filter((x) => !seen.has(x.key) && seen.add(x.key))); };
       if (tg && !tg.err) { take(tg.results); onl.tgNext = tg.next; } else if (tg) { console.warn('Поиск в Telegram:', tg.err); onl.tgNext = null; }
@@ -1520,10 +1524,12 @@
       }
     } catch (e) {
       console.warn('Поиск онлайн:', e);
-      onl.error = 'Нет связи с сервисом поиска';
+      if (tok === webTok) onl.error = 'Нет связи с сервисом поиска';
     } finally {
-      onl.busy = false;
-      if (view.tab === 'online') renderLib();
+      if (tok === webTok) {
+        onl.busy = false;
+        if (view.tab === 'online') renderLib();
+      }
     }
   }
 
@@ -1665,7 +1671,7 @@
       const list = await TG.sync();
       const hidden = new Set(store.get('hidden', []));
       const alive = new Set(list.map((d) => d.key));
-      tracks.filter((t) => t.tg && !t.tg.msg && !alive.has(t.key)).forEach((t) => removeTrack(t.key, true)); // найденное поиском не трогаем
+      removeTracks(tracks.filter((t) => t.tg && !t.tg.msg && !alive.has(t.key)).map((t) => t.key), true); // найденное поиском не трогаем
       const added = addTracks(list.filter((d) => !hidden.has(d.key)).map(tgTrack), true);
       if (!quiet || added) toast(added ? 'Из профиля Telegram: ' + tracksWord(added) : 'Новых треков в профиле нет');
     } catch (e) {
@@ -1713,7 +1719,7 @@
     else if (act === 'tg-cancel') TG.cancel();
     else if (act === 'tg-logout') {
       if (!confirm('Выйти из Telegram? Треки из Telegram и скачанные файлы удалятся с устройства.')) return;
-      tracks.filter((t) => t.tg).forEach((t) => removeTrack(t.key, true));
+      removeTracks(tracks.filter((t) => t.tg).map((t) => t.key), true, true); // кэш TG.logout очистит целиком
       await TG.logout();
     }
   }
@@ -1724,7 +1730,8 @@
     if (s.phase === 'ready') return false;
 
     setHead('<div class="lh-title">Telegram</div>');
-    const sig = s.phase + '\u0001' + s.error + '\u0001' + s.hint;
+    const canStop = s.phase === 'connecting' && !!(TG && TG.loggingIn);
+    const sig = s.phase + '\u0001' + s.error + '\u0001' + s.hint + '\u0001' + canStop;
     if (tgCard && tgCard.sig === sig) { ol.appendChild(tgCard.el); return true; }
     const li = document.createElement('li');
     li.className = 'tg-card';
@@ -1746,6 +1753,7 @@
       (s.error ? '<p class="tg-err"></p>' : '') + body +
       (isForm ? '<div class="row"><button class="btn primary" type="submit">Далее</button>' +
         '<button class="btn ghost" type="button" data-act="tg-cancel">Отмена</button></div>' : '') +
+      (canStop ? '<div class="row"><button class="btn ghost" type="button" data-act="tg-cancel">Отмена</button></div>' : '') +
       (s.phase === 'idle' ? '<p class="hint">Вход идёт напрямую в Telegram, номер и код никуда больше не передаются.</p>' : '') +
       '</form>';
     li.querySelector('h3').textContent = title;
