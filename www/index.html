@@ -139,6 +139,8 @@
           <div class="ctrl"><label>Скорость вращения <b id="eightDSpeed-val"></b></label>
             <input type="range" id="eightDSpeed" min="0.03" max="1" step="0.01"></div>
           <label class="switch"><input type="checkbox" id="limiter"><span></span>Лимитер (защита от перегруза)</label>
+          <label class="switch"><input type="checkbox" id="normalize"><span></span>Одинаковая громкость треков</label>
+          <p class="hint">Тихие треки чуть громче, громкие тише. Новый трек подстраивается за первые секунды, дальше громкость запоминается.</p>
         </div>
 
         <div class="card">
@@ -152,6 +154,7 @@
           <h3>Таймер сна</h3>
           <div class="chips" id="sleep-chips">
             <button data-min="0" class="chip">Выкл</button>
+            <button data-min="-1" class="chip">До конца трека</button>
             <button data-min="15" class="chip">15 мин</button>
             <button data-min="30" class="chip">30 мин</button>
             <button data-min="45" class="chip">45 мин</button>
@@ -183,6 +186,12 @@
           <p class="hint">Для трека без обложки ищем её по исполнителю и названию (Deezer, iTunes). Название, исполнителя и обложку можно поправить вручную: меню трека → «Название, исполнитель, обложка…».</p>
           <div class="row wrap"><button class="btn" id="btn-net-covers">Найти обложки для всей медиатеки</button></div>
           <p class="hint" id="net-covers-st"></p>
+        </div>
+        <div class="card">
+          <h3>Дубликаты</h3>
+          <p class="hint">Ищет одинаковые треки: тот же исполнитель и то же название (ремиксы и live с пометкой в названии не путаются). Лишние копии убираются из медиатеки, файлы на диске остаются, а плейлисты переходят на оставшийся трек.</p>
+          <div class="row wrap"><button class="btn" id="btn-dups">Найти дубликаты</button></div>
+          <div id="dups"></div>
         </div>
         <div class="card about">
           <h3>Обновления</h3>

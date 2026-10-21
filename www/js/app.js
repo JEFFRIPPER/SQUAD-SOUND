@@ -72,7 +72,7 @@
   let qpos = -1;              // позиция текущего трека в очереди
   let playlists = store.get('playlists', []); // [{id, name, keys: []}]
   let view = { tab: settings.libTab, group: null };
-  let sleepTimer = null, sleepEnd = 0;
+  let sleepTimer = null, sleepEnd = 0, sleepFadeT = null, sleepTrack = false; // sleepTrack — «до конца трека»
 
   const curTrack = () => (qpos >= 0 ? byKey.get(queue[qpos]) : null) || null;
 
@@ -139,14 +139,35 @@
     return t;
   }
 
+  // Когда трек впервые появился в медиатеке — для умных плейлистов «добавлен за N дней».
+  // Всё, что было до появления этой функции (первые 2 минуты первого запуска), считаем давним.
+  let seen = {}, seenFresh = false, seenT = 0;
+  try { const raw = localStorage.getItem('squad.seen'); if (raw) seen = JSON.parse(raw) || {}; else seenFresh = true; } catch (_) {}
+  const seenStart = Date.now();
+  function markSeen(list) {
+    const now = Date.now(), old = seenFresh && now - seenStart < 120000;
+    let ch = false;
+    for (const t of list) if (seen[t.key] == null) { seen[t.key] = old ? 0 : now; ch = true; }
+    if (!ch) return;
+    clearTimeout(seenT);
+    seenT = setTimeout(() => {
+      const ks = Object.keys(seen);
+      if (ks.length > 30000) ks.forEach((k) => { if (!byKey.has(k)) delete seen[k]; });
+      try { localStorage.setItem('squad.seen', JSON.stringify(seen)); } catch (_) {}
+    }, 1500);
+  }
+
   function addTracks(list, quiet) {
     let added = 0;
+    const fresh = [];
     for (const t of list) {
       if (byKey.has(t.key)) continue;
       byKey.set(t.key, t);
       tracks.push(t);
+      fresh.push(t);
       added++;
     }
+    markSeen(fresh);
     if (qpos < 0 && tracks.length) { buildQueue(tracks.map((t) => t.key), 0); showMeta(); }
     renderLib();
     saveLibrary();
@@ -378,6 +399,7 @@
     if (tab === 'playlists') {
       const pl = playlists.find((p) => p.id === view.group);
       if (!pl) return [];
+      if (pl.smart) refreshSmart();
       return pl.keys.map((k, pos) => ({ t: byKey.get(k), pos })).filter((x) => x.t && matches(x.t, q));
     }
     let list = tab === 'telegram' ? tracks.filter((t) => t.tg) : tab === 'online' ? tracks.filter((t) => t.web) : tracks;
@@ -468,8 +490,9 @@
 
     // Список плейлистов
     if (tab === 'playlists' && view.group == null) {
+      refreshSmart();
       setHead('<div class="lh-title">Плейлисты <span class="lh-sub">' + playlists.length + '</span></div>' +
-        '<button class="btn primary" data-act="pl-new">＋ Новый плейлист</button>');
+        '<button class="btn primary" data-act="pl-new">＋ Новый плейлист</button><button class="btn" data-act="pl-smart" title="Плейлист, который собирается сам по правилам">＋ Умный</button>');
       for (const pl of playlists) {
         if (q && !pl.name.toLowerCase().includes(q)) continue;
         const present = pl.keys.map((k) => byKey.get(k)).filter(Boolean);
@@ -481,7 +504,7 @@
           '<div class="t-info"><div class="t-title"></div><div class="t-artist"></div></div><span class="chev">›</span>';
         if (!withArt) li.querySelector('.t-art').textContent = '♫';
         li.querySelector('.t-title').textContent = pl.name;
-        li.querySelector('.t-artist').textContent = tracksWord(present.length) +
+        li.querySelector('.t-artist').textContent = (pl.smart ? 'Умный · ' : '') + tracksWord(present.length) +
           (present.length < pl.keys.length ? ' · ещё ' + (pl.keys.length - present.length) + ' не добавлено' : '');
         frag.appendChild(li);
       }
@@ -501,7 +524,7 @@
 
     // Список треков
     items = viewItems(q);
-    const reorder = !q && (tab === 'queue' || tab === 'playlists');
+    const reorder = !q && (tab === 'queue' || (tab === 'playlists' && !((playlists.find((p) => p.id === view.group) || {}).smart)));
     const total = items.length;
     if (tab === 'tracks') {
       setHead('<div class="lh-title">Все треки <span class="lh-sub">' + total + '</span></div>' +
@@ -521,7 +544,8 @@
       if (tab === 'playlists') {
         const pl = playlists.find((p) => p.id === view.group);
         title = pl ? pl.name : '';
-        extra = '<button class="btn ghost" data-act="pl-rename">Переименовать</button><button class="btn ghost" data-act="pl-delete">Удалить</button>';
+        extra = (pl && pl.smart ? '<button class="btn ghost" data-act="pl-rules">Правила</button>' : '<button class="btn ghost" data-act="pl-rename">Переименовать</button>') +
+          '<button class="btn ghost" data-act="pl-delete">Удалить</button>';
       } else {
         const l = groupLabel(tab, view.group);
         title = l.name; sub = l.sub;
@@ -555,7 +579,7 @@
       li.textContent = tab === 'online' ? (q ? 'Нажмите Enter, чтобы искать «' + $('search').value.trim() + '» в открытых источниках'
         : 'Введите название трека или исполнителя в поиске выше и нажмите Enter. Ищем по открытым источникам с лицензиями Creative Commons: Jamendo, Wikimedia, Freesound, ccMixter.')
         : q ? 'Ничего не найдено' : tab === 'telegram'
-        ? (tgBusy ? 'Загружаю музыку из профиля…' : 'В профиле Telegram пока нет музыки. Добавьте песни в свой профиль в Telegram и нажмите ⟳.') : tab === 'playlists' ? 'Плейлист пуст. Добавляйте треки через меню ⋮.' : 'Пусто';
+        ? (tgBusy ? 'Загружаю музыку из профиля…' : 'В профиле Telegram пока нет музыки. Добавьте песни в свой профиль в Telegram и нажмите ⟳.') : tab === 'playlists' ? ((playlists.find((p) => p.id === view.group) || {}).smart ? 'Под правила пока ничего не подходит. Нажмите «Правила», чтобы их изменить.' : 'Плейлист пуст. Добавляйте треки через меню ⋮.') : 'Пусто';
       frag.appendChild(li);
     }
     ol.appendChild(frag);
@@ -595,10 +619,14 @@
       buildQueue(keys, act === 'shuffle-all' ? Math.floor(Math.random() * keys.length) : 0);
       playAt(qpos);
     } else if (act === 'queue-clear') {
-      queue = queue.slice(0, qpos + 1); renderLib(); toast('Очередь очищена');
+      queue = queue.slice(0, qpos + 1); renderLib(); emitApp('queue'); toast('Очередь очищена');
     } else if (act === 'pl-new') {
       const name = await askText('Новый плейлист', 'Плейлист ' + (playlists.length + 1));
       if (name) { const p = newPlaylist(name); openLib('playlists', p.id); }
+    } else if (act === 'pl-smart') {
+      smartDialog(null);
+    } else if (act === 'pl-rules' && pl) {
+      smartDialog(pl);
     } else if (act === 'pl-rename' && pl) {
       const name = await askText('Переименовать плейлист', pl.name);
       if (name) { pl.name = name; savePlaylists(); renderLib(); }
@@ -665,6 +693,7 @@
       if (order.length !== old.length) { renderLib(); return; }
       queue = order.map((p) => old[p]);
       qpos = order.indexOf(cur);
+      emitApp('queue');
     } else if (view.tab === 'playlists') {
       const pl = playlists.find((p) => p.id === view.group);
       if (pl) {
@@ -739,7 +768,7 @@
   }
 
   function playlistMenu(anchor, t) {
-    openMenu(anchor, 'В плейлист', playlists.map((pl) => ({ label: pl.name, act: () => addToPlaylist(pl, t) })).concat([{
+    openMenu(anchor, 'В плейлист', playlists.filter((pl) => !pl.smart).map((pl) => ({ label: pl.name, act: () => addToPlaylist(pl, t) })).concat([{
       label: '＋ Новый плейлист…',
       act: async () => {
         const name = await askText('Новый плейлист', 'Плейлист ' + (playlists.length + 1));
@@ -755,7 +784,7 @@
       { label: 'Играть следующим', act: () => playNext(t.key) },
       { label: 'Добавить в очередь', act: () => enqueue(t.key) },
       { label: 'Добавить в плейлист…', keep: true, act: () => playlistMenu(anchor, t) },
-      view.tab === 'playlists' && view.group ? {
+      view.tab === 'playlists' && view.group && !(playlists.find((p) => p.id === view.group) || {}).smart ? {
         label: 'Убрать из плейлиста',
         act: () => {
           const pl = playlists.find((p) => p.id === view.group);
@@ -805,10 +834,22 @@
   }
 
   function removeFromQueue(pos) {
-    if (pos === qpos) return;
+    if (pos === qpos || pos < 0 || pos >= queue.length) return;
     queue.splice(pos, 1);
     if (pos < qpos) qpos--;
     renderLib();
+    emitApp('queue');
+  }
+
+  // перенести трек очереди с позиции from на to (текущий трек не двигаем)
+  function moveInQueue(from, to) {
+    if (from === to || from === qpos || from < 0 || to < 0 || from >= queue.length || to >= queue.length) return;
+    const [k] = queue.splice(from, 1);
+    queue.splice(to, 0, k);
+    if (from < qpos && to >= qpos) qpos--;
+    else if (from > qpos && to <= qpos) qpos++;
+    emitApp('queue');
+    if (view.tab === 'queue') renderLib();
   }
 
   // auto = переход по окончании трека (учитывает «повтор выкл»)
@@ -842,6 +883,60 @@
     throw new Error('Файл недоступен');
   }
 
+  // ---------- Одинаковая громкость треков ----------
+  // Меряем громкость самой записи (до эквалайзера и эффектов) за время игры и запоминаем по треку.
+  // Трек, который ещё не мерили, начинает со средней громкости уже измеренных и подстраивается за первые секунды.
+  const NORM_TARGET = -14; // дБ RMS, к ним подтягиваем
+  let loud = {};
+  try { loud = JSON.parse(localStorage.getItem('squad.loud') || '{}') || {}; } catch (_) {}
+  const meas = decks.map(() => ({ key: '', sum: 0, n: 0 }));
+  let loudSaveT = 0;
+  function saveLoud() {
+    clearTimeout(loudSaveT);
+    loudSaveT = setTimeout(() => {
+      const ks = Object.keys(loud);
+      for (let i = 0; i < ks.length - 5000; i++) delete loud[ks[i]]; // старые замеры вытесняются
+      try { localStorage.setItem('squad.loud', JSON.stringify(loud)); } catch (_) {}
+    }, 2000);
+  }
+  function loudAvg() {
+    const v = Object.values(loud);
+    return v.length >= 3 ? v.reduce((a, b) => a + b, 0) / v.length : null;
+  }
+  function normGain(i) {
+    const key = decks[i].dataset.key;
+    if (!settings.normalize || !key) return 1;
+    const m = meas[i];
+    const db = loud[key] != null ? loud[key] : m.key === key && m.n >= 20 ? 10 * Math.log10(m.sum / m.n) : loudAvg();
+    if (db == null || !isFinite(db)) return 1;
+    // усиливаем не больше чем на 6 дБ и только с лимитером, иначе громкий пик захрипит
+    const g = Math.max(-12, Math.min(engine.state.limiter ? 6 : 0, NORM_TARGET - db));
+    return Math.pow(10, g / 20);
+  }
+  // на деку пришёл другой трек: замер прежнего (если набралось ~10 с звука) запоминаем, счётчик — с нуля
+  function flushMeas(i) {
+    const m = meas[i];
+    if (m.key && m.n >= 50 && loud[m.key] == null) { loud[m.key] = Math.round(10 * Math.log10(m.sum / m.n) * 10) / 10; saveLoud(); }
+    m.key = ''; m.sum = 0; m.n = 0;
+  }
+  const normDeck = (i, sec) => engine.setNorm(i, normGain(i), sec);
+  function normAll(sec) { decks.forEach((_, i) => normDeck(i, sec)); }
+  setInterval(() => {
+    if (!settings.normalize || !engine.nodes) return;
+    decks.forEach((d, i) => {
+      const key = d.dataset.key;
+      const m = meas[i];
+      if (d.paused && m.n >= 50) flushMeas(i); // трек остановился или ушёл в соседнюю деку — замер готов
+      if (!key || d.paused || loud[key] != null) return;
+      if (m.key !== key) { flushMeas(i); m.key = key; }
+      const v = engine.level(i);
+      if (!(v > 1e-5)) return; // тишину (-50 дБ и ниже) не считаем
+      m.sum += v; m.n++;
+      if (m.n === 20 || m.n % 50 === 0) normDeck(i, 3); // первые ~4 с, потом уточняем каждые ~10 с
+      if (m.n >= 300) { loud[key] = Math.round(10 * Math.log10(m.sum / m.n) * 10) / 10; saveLoud(); } // ~минута — хватит
+    });
+  }, 200);
+
   // Поколение загрузки на каждую деку: опоздавшая загрузка (долгое скачивание) не перезапишет то, что уже играет
   const deckGen = [0, 0];
   async function loadDeck(deck, t) {
@@ -851,8 +946,10 @@
     if (gen !== deckGen[i]) { URL.revokeObjectURL(url); throw new DOMException('Загрузка устарела', 'AbortError'); }
     if (deckUrls[i]) URL.revokeObjectURL(deckUrls[i]);
     deckUrls[i] = url;
+    flushMeas(i);
     deck.dataset.key = t.key;
     deck.src = url;
+    normDeck(i, 0);
   }
 
   const preReady = (pos) => pre && pre.pos === pos && pre.key === queue[pos] && engine.idle && engine.idle.dataset.key === pre.key;
@@ -958,6 +1055,7 @@
   decks.forEach((d) => {
     d.addEventListener('ended', (e) => {
       if (!isActive(e)) return;
+      if (sleepTrack) { sleepStop('Таймер сна: трек доиграл'); return; }
       if (settings.repeat === 'one') { A().currentTime = 0; A().play(); return; }
       const np = nextPos(true);
       if (np < 0) { setPlayingUI(); return; }
@@ -1048,7 +1146,7 @@
       try { navigator.mediaSession.setPositionState({ duration: d, position: Math.min(a.currentTime, d), playbackRate: a.playbackRate }); } catch (_) {}
     }
     // Заранее грузим следующий трек и запускаем кроссфейд
-    if (!isFinite(d) || !d || a.paused || settings.repeat === 'one' || !engine.nodes) return;
+    if (!isFinite(d) || !d || a.paused || settings.repeat === 'one' || sleepTrack || !engine.nodes) return;
     const np = nextPos(true);
     if (np < 0) return;
     const cf = settings.crossfade;
@@ -1271,8 +1369,10 @@
     });
   }
   ['vinyl', 'eightD', 'limiter'].forEach((key) => {
-    $(key).onchange = (e) => { engine.set(key, e.target.checked); syncFx(); saveFx(); };
+    $(key).onchange = (e) => { engine.set(key, e.target.checked); syncFx(); saveFx(); if (key === 'limiter') normAll(0.5); };
   });
+  $('normalize').checked = !!settings.normalize;
+  $('normalize').onchange = (e) => { settings.normalize = e.target.checked; saveSettings(); normAll(1); };
 
   const FX_PRESETS = [
     ['Обычный', {}],
@@ -1330,16 +1430,32 @@
     const b = e.target.closest('.chip');
     if (!b) return;
     const min = +b.dataset.min;
-    clearTimeout(sleepTimer); sleepTimer = null; sleepEnd = 0;
-    if (min) {
+    sleepOff();
+    if (min === -1) {
+      sleepTrack = true;
+      toast('Остановлю, когда трек доиграет');
+    } else if (min) {
       sleepEnd = Date.now() + min * 60000;
-      sleepTimer = setTimeout(() => { decks.forEach((d) => d.pause()); sleepTimer = null; sleepEnd = 0; syncSleep(); toast('Таймер сна: пауза'); }, min * 60000);
+      // последние 20 секунд музыка плавно затихает
+      sleepFadeT = setTimeout(() => engine.fadeTo(0, Math.min(20, min * 60)), Math.max(0, min * 60000 - 20000));
+      sleepTimer = setTimeout(() => sleepStop('Таймер сна: пауза'), min * 60000);
       toast('Остановлю через ' + min + ' мин');
     }
     document.querySelectorAll('#sleep-chips .chip').forEach((c) => c.classList.toggle('on', c === b && !!min));
     syncSleep();
   });
+  function sleepOff() {
+    clearTimeout(sleepTimer); clearTimeout(sleepFadeT);
+    sleepTimer = sleepFadeT = null; sleepEnd = 0; sleepTrack = false;
+    if (engine.fadeMul !== 1) engine.fadeTo(1, 0.4);
+  }
+  function sleepStop(msg) {
+    decks.forEach((d) => d.pause());
+    sleepOff();
+    syncSleep(); toast(msg);
+  }
   function syncSleep() {
+    if (sleepTrack) { $('sleep-hint').textContent = 'Пауза, когда доиграет текущий трек'; return; }
     if (!sleepEnd) { $('sleep-hint').textContent = ''; document.querySelectorAll('#sleep-chips .chip').forEach((c) => c.classList.remove('on')); return; }
     $('sleep-hint').textContent = 'Пауза через ' + fmt((sleepEnd - Date.now()) / 1000);
   }
@@ -2038,6 +2154,188 @@
   $('net-covers').onchange = (e) => { settings.netCovers = e.target.checked; saveSettings(); };
   $('btn-net-covers').onclick = findAllCovers;
 
+  // ---------- Умные плейлисты: собираются сами по правилам ----------
+  // pl.smart = {genre, artist, minPlays, staleDays, addedDays, yearFrom, yearTo, liked, sort, limit}. Ключи пересчитываются
+  // при открытии, при изменении медиатеки и смене трека, поэтому остальной код (главная, телефон) видит обычный список.
+  const SMART_SORTS = { plays: 'Чаще слушаю', recent: 'Недавно слушал', added: 'Новые сверху', title: 'По названию' };
+  function smartKeys(r) {
+    const st = (window.SquadStats && SquadStats.data.t) || {};
+    const likedPl = playlists.find((p) => p.id === 'liked');
+    const liked = r.liked ? new Set(likedPl ? likedPl.keys : []) : null;
+    const now = Date.now(), DAY = 864e5;
+    const g = String(r.genre || '').toLowerCase().trim(), ar = String(r.artist || '').toLowerCase().trim();
+    const list = tracks.filter((t) => {
+      const e = st[t.key];
+      if (g && !String(t.genre || '').toLowerCase().includes(g)) return false;
+      if (ar && !String(t.artist || '').toLowerCase().includes(ar)) return false;
+      if (r.minPlays > 0 && !(e && e.n >= r.minPlays)) return false;
+      if (r.staleDays > 0 && e && e.last > now - r.staleDays * DAY) return false;
+      if (r.addedDays > 0 && !(seen[t.key] > now - r.addedDays * DAY)) return false;
+      if (r.yearFrom > 0 && !(t.year >= r.yearFrom)) return false;
+      if (r.yearTo > 0 && !(t.year && t.year <= r.yearTo)) return false;
+      if (liked && !liked.has(t.key)) return false;
+      return true;
+    });
+    const n = (k) => (st[k] && st[k].n) || 0, last = (k) => (st[k] && st[k].last) || 0;
+    const idx = new Map(tracks.map((t, i) => [t.key, i]));
+    if (r.sort === 'plays') list.sort((x, y) => n(y.key) - n(x.key) || last(y.key) - last(x.key));
+    else if (r.sort === 'recent') list.sort((x, y) => last(y.key) - last(x.key));
+    else if (r.sort === 'added') list.sort((x, y) => (seen[y.key] || 0) - (seen[x.key] || 0) || idx.get(y.key) - idx.get(x.key));
+    else list.sort((x, y) => cmp(x.title, y.title));
+    return list.slice(0, r.limit > 0 ? Math.min(r.limit, 1000) : 100).map((t) => t.key);
+  }
+  function refreshSmart() {
+    let ch = false;
+    for (const pl of playlists) {
+      if (!pl.smart) continue;
+      const k = smartKeys(pl.smart);
+      if (k.length !== pl.keys.length || k.some((x, i) => x !== pl.keys[i])) { pl.keys = k; ch = true; }
+    }
+    if (ch) savePlaylists();
+    return ch;
+  }
+  let smartT = 0;
+  const smartSoon = () => { clearTimeout(smartT); smartT = setTimeout(refreshSmart, 800); };
+  appEvents.addEventListener('library', smartSoon);
+  appEvents.addEventListener('track', smartSoon);
+
+  const SMART_PRE = {
+    top: { name: 'Часто слушаю', minPlays: 3, sort: 'plays', limit: 50 },
+    stale: { name: 'Давно не слушал', minPlays: 1, staleDays: 30, sort: 'plays', limit: 100 },
+    fresh: { name: 'Новое в медиатеке', addedDays: 30, sort: 'added', limit: 100 },
+    liked: { name: 'Любимое на повторе', liked: true, sort: 'plays', limit: 50 },
+  };
+  const SMART_NUM = ['minPlays', 'staleDays', 'addedDays', 'yearFrom', 'yearTo', 'limit'];
+  const smartWrap = document.createElement('div');
+  smartWrap.className = 'dialog-wrap smart-wrap';
+  smartWrap.innerHTML = '<form class="dialog smart-dlg" novalidate><h3>Умный плейлист</h3>' +
+    '<div class="chips smart-pre">' + Object.entries(SMART_PRE).map(([k, v]) => '<button type="button" class="chip" data-pre="' + k + '">' + v.name + '</button>').join('') + '</div>' +
+    '<label class="sf sf-wide"><span>Название</span><input class="search" name="name" maxlength="80" required></label>' +
+    '<div class="sf-grid">' +
+    [['genre', 'Жанр содержит', 'text'], ['artist', 'Исполнитель содержит', 'text'], ['minPlays', 'Слушал не меньше, раз', 'number'],
+      ['staleDays', 'Не слушал дольше, дней', 'number'], ['addedDays', 'Добавлен за последние, дней', 'number'], ['limit', 'Не больше треков', 'number'],
+      ['yearFrom', 'Год от', 'number'], ['yearTo', 'Год до', 'number']]
+      .map(([n, l, ty]) => '<label class="sf"><span>' + l + '</span><input class="search" name="' + n + '" type="' + ty + '"' + (ty === 'number' ? ' min="0" inputmode="numeric"' : '') + '></label>').join('') +
+    '<label class="sf"><span>Порядок</span><select class="select" name="sort">' + Object.entries(SMART_SORTS).map(([k, v]) => '<option value="' + k + '">' + v + '</option>').join('') + '</select></label>' +
+    '</div><label class="switch"><input type="checkbox" name="liked"><span></span>Только из «Любимых»</label>' +
+    '<p class="hint smart-count"></p><div class="row"><button type="button" class="btn ghost" data-x>Отмена</button><button class="btn primary">Сохранить</button></div></form>';
+  document.body.appendChild(smartWrap);
+  const smartForm = smartWrap.querySelector('form');
+  let smartEdit = null;
+  function smartRead() {
+    const f = smartForm.elements, r = { genre: f.genre.value.trim(), artist: f.artist.value.trim(), sort: f.sort.value, liked: f.liked.checked };
+    SMART_NUM.forEach((k) => { r[k] = Math.max(0, parseInt(f[k].value, 10) || 0); });
+    if (!r.limit) r.limit = 100;
+    return r;
+  }
+  function smartFill(name, r) {
+    const f = smartForm.elements;
+    f.name.value = name || '';
+    f.genre.value = r.genre || ''; f.artist.value = r.artist || '';
+    SMART_NUM.forEach((k) => { f[k].value = r[k] ? r[k] : ''; });
+    if (!r.limit) f.limit.value = 100;
+    f.sort.value = SMART_SORTS[r.sort] ? r.sort : 'plays';
+    f.liked.checked = !!r.liked;
+    smartCount();
+  }
+  function smartCount() {
+    const n = smartKeys(smartRead()).length;
+    smartWrap.querySelector('.smart-count').textContent = 'Подходит сейчас: ' + tracksWord(n);
+  }
+  function smartDialog(pl) {
+    smartEdit = pl;
+    smartFill(pl ? pl.name : 'Умный плейлист ' + (playlists.filter((p) => p.smart).length + 1), pl ? pl.smart : { sort: 'plays', limit: 100 });
+    smartWrap.classList.add('show');
+    setTimeout(() => smartForm.elements.name.focus(), 50);
+  }
+  const smartClose = () => { smartWrap.classList.remove('show'); smartEdit = null; };
+  smartForm.addEventListener('input', smartCount);
+  smartWrap.addEventListener('click', (e) => {
+    if (e.target === smartWrap || e.target.closest('[data-x]')) { smartClose(); return; }
+    const b = e.target.closest('[data-pre]');
+    if (b) { const v = SMART_PRE[b.dataset.pre]; smartFill(v.name, v); }
+  });
+  smartWrap.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); smartClose(); } });
+  smartForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const name = smartForm.elements.name.value.trim();
+    if (!name) { smartForm.elements.name.focus(); return; }
+    const r = smartRead();
+    let pl = smartEdit;
+    if (pl && !playlists.includes(pl)) pl = null; // плейлист успели удалить
+    if (pl) { pl.name = name; pl.smart = r; } else { pl = newPlaylist(name); pl.smart = r; }
+    pl.keys = smartKeys(r);
+    savePlaylists();
+    smartClose();
+    openLib('playlists', pl.id);
+    toast('Умный плейлист: ' + tracksWord(pl.keys.length));
+  });
+
+  // ---------- Дубликаты: тот же исполнитель и то же название ----------
+  const dupNorm = (s) => String(s || '').toLowerCase().replace(/ё/g, 'е')
+    .replace(/[([](?:official[^)\]]*|audio|lyrics?|lyric video|текст|клип|hd|hq|4k)[)\]]/gi, ' ')
+    .replace(/\s(?:feat|ft|featuring)\.?\s.*$/i, ' ')
+    .replace(/[^\p{L}\p{N}()[\]]+/gu, ' ').replace(/\s+/g, ' ').trim();
+  const dupWhere = (t) => (t.tg ? 'Telegram · ' : t.web ? 'Онлайн · ' : '') + (t.path || t.name);
+  let dupGroups = [];
+  function findDups() {
+    const by = new Map();
+    for (const t of tracks) {
+      const title = dupNorm(t.title);
+      if (!title) continue;
+      const k = dupNorm(t.artist) + '\u0001' + title;
+      if (!by.has(k)) by.set(k, []);
+      by.get(k).push(t);
+    }
+    const inPl = new Set();
+    playlists.forEach((p) => p.keys.forEach((k) => inPl.add(k)));
+    // какой оставить по умолчанию: тот, что в плейлистах, потом свой файл, потом с обложкой, потом добавленный раньше
+    const score = (t, i) => (inPl.has(t.key) ? 8 : 0) + (t.path || t.uri || t.file ? 4 : 0) + (t.thumb ? 2 : 0) - i / 1e6;
+    dupGroups = Array.from(by.values()).filter((g) => g.length > 1).map((g) => {
+      const best = g.map((t) => [t, score(t, tracks.indexOf(t))]).sort((a, b) => b[1] - a[1])[0][0];
+      return { list: g, keep: best.key };
+    });
+    renderDups();
+  }
+  function renderDups() {
+    const box = $('dups');
+    if (!dupGroups.length) { box.innerHTML = '<p class="hint">Дубликатов нет.</p>'; return; }
+    const extra = dupGroups.reduce((n, g) => n + g.list.length - 1, 0);
+    box.innerHTML = '<p class="hint">Нашлось групп: ' + dupGroups.length + '. Отметьте, какую копию оставить.</p>' +
+      dupGroups.slice(0, 300).map((g, gi) => '<div class="dup-g"><b>' + esc(g.list[0].artist ? g.list[0].artist + ' — ' : '') + esc(g.list[0].title) + '</b>' +
+        g.list.map((t) => '<label class="dup-t"><input type="radio" name="dup' + gi + '" data-g="' + gi + '" value="' + esc(t.key) + '"' + (t.key === g.keep ? ' checked' : '') + '><span>' + esc(dupWhere(t)) + '</span></label>').join('') + '</div>').join('') +
+      (dupGroups.length > 300 ? '<p class="hint">Показаны первые 300 групп — после уборки поиск можно повторить.</p>' : '') +
+      '<div class="row wrap"><button class="btn primary" id="dups-go">Убрать лишние копии: ' + Math.min(extra, dupGroups.slice(0, 300).reduce((n, g) => n + g.list.length - 1, 0)) + '</button><button class="btn" id="dups-no">Отмена</button></div>';
+  }
+  function dropDups(groups) {
+    const map = new Map();
+    for (const g of groups) for (const t of g.list) if (t.key !== g.keep && byKey.has(g.keep)) map.set(t.key, g.keep);
+    if (!map.size) return 0;
+    // плейлисты переходят на оставшуюся копию; если она там уже есть — лишнюю просто убираем
+    for (const pl of playlists) {
+      const added = new Set();
+      const before = pl.keys;
+      pl.keys = before.flatMap((k) => {
+        const m = map.get(k);
+        if (!m) return [k];
+        if (before.includes(m) || added.has(m)) return [];
+        added.add(m); return [m];
+      });
+    }
+    savePlaylists();
+    removeTracks(Array.from(map.keys()));
+    return map.size;
+  }
+  $('btn-dups').onclick = findDups;
+  $('dups').addEventListener('change', (e) => { const r = e.target.closest('input[data-g]'); if (r) dupGroups[+r.dataset.g].keep = r.value; });
+  $('dups').addEventListener('click', (e) => {
+    if (e.target.id === 'dups-no') { dupGroups = []; $('dups').innerHTML = ''; return; }
+    if (e.target.id !== 'dups-go') return;
+    const n = dropDups(dupGroups.slice(0, 300));
+    dupGroups = []; $('dups').innerHTML = '';
+    toast(n ? 'Убрано копий: ' + n : 'Нечего убирать');
+  });
+
   window.SquadApp = {
     get tracks() { return tracks; },
     get playlists() { return playlists; },
@@ -2086,6 +2384,11 @@
       playAt(qpos);
     },
     append(keys) { queue.push(...keys); emitApp('queue'); if (view.tab === 'queue') renderLib(); },
+    queueList: () => ({ keys: queue.slice(), pos: qpos }),
+    playPos(i) { if (i === qpos && A().src) togglePlay(); else if (i >= 0 && i < queue.length) { userQueued = true; playAt(i); } },
+    moveQueue: moveInQueue,
+    removeQueue: removeFromQueue,
+    clearQueue() { if (qpos >= 0 && queue.length > qpos + 1) { queue = queue.slice(0, qpos + 1); emitApp('queue'); if (view.tab === 'queue') renderLib(); } },
     // что заиграет после текущего (при «повтор выкл» в конце очереди — ничего)
     upNext() { const p = nextPos(true); return p >= 0 && p !== qpos ? byKey.get(queue[p]) || null : null; },
     togglePlay, step, showTab, openLib, toast, fmt, esc, renderLib, savePlaylists, enqueue, playNext,

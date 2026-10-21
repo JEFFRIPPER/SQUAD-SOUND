@@ -1749,7 +1749,7 @@
 
   // ---------- Настройки по разделам: внешний вид, музыка, приложение ----------
   const SETS = [['look', 'Внешний вид'], ['music', 'Музыка'], ['app', 'Приложение']];
-  const SEC_OF = { 'Плеер': 'look', 'Фон и обложки': 'look', 'Свой акцент': 'look', 'Обложки и названия': 'music', 'Тексты песен': 'music', 'Распознавание песни': 'music', 'Last.fm': 'music' };
+  const SEC_OF = { 'Плеер': 'look', 'Фон и обложки': 'look', 'Свой акцент': 'look', 'Обложки и названия': 'music', 'Дубликаты': 'music', 'Тексты песен': 'music', 'Распознавание песни': 'music', 'Last.fm': 'music' };
   const setP = $('panel-themes');
   const setSeg = document.createElement('div');
   setSeg.className = 'seg set-seg';
