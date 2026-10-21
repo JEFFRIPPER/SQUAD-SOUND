@@ -933,3 +933,43 @@ html:not(.apk) #panel-home { padding: 24px 28px 40px; }
 /* оверлеи поверх перетаскиваемых зон окна .exe: иначе клики в них уходят в перетаскивание */
 .dl, .dset { -webkit-app-region: no-drag; }
 html.desk .dl-head { -webkit-app-region: drag; }
+
+/* ===== ПК, MD3: навигационная «рельса» с подписями и скруглённые поверхности (контент и плеер — отдельные карточки) ===== */
+@media (min-width: 821px) {
+  html:not(.apk) { --surf: color-mix(in srgb, var(--text) 4%, var(--bg)); }
+  html:not(.apk) .topbar { width: 88px; padding: 14px 0 16px; gap: 16px; background: transparent; border-right: 0; }
+  html:not(.apk) .tabs { width: 100%; gap: 12px; }
+  /* сама кнопка прозрачная, подсвечивается только «таблетка» под иконкой — иконка всегда ровно по её центру */
+  html:not(.apk) .tab, html:not(.apk) .tab.active { width: 100%; height: auto; min-height: 0; padding: 0; gap: 4px; flex-direction: column; justify-content: flex-start;
+    font-size: 12px; font-weight: 600; line-height: 16px; border-radius: 0; background: none; color: var(--muted); animation: none; overflow: visible; }
+  html:not(.apk) .tab::after { content: none; }
+  html:not(.apk) .tab > .md-ripple { display: none; }
+  html:not(.apk) .tab-ic { box-sizing: border-box; width: 56px; height: 32px; padding: 4px 16px; border-radius: 16px;
+    background: linear-gradient(var(--sl, transparent), var(--sl, transparent)) center / 100% 100% no-repeat; transition: background-size var(--md-medium) var(--md-ease-decel); }
+  html:not(.apk) .tab:hover, html:not(.apk) .tab:not(.active):hover { color: var(--text); background: none; }
+  html:not(.apk) .tab.active { color: var(--text); }
+  html:not(.apk) .tab.active .tab-ic { color: var(--md-on-secondary-container);
+    background: linear-gradient(var(--sl, transparent), var(--sl, transparent)), linear-gradient(var(--md-secondary-container), var(--md-secondary-container));
+    background-position: center; background-repeat: no-repeat; background-size: 100% 100%, 100% 100%; animation: rail-in 380ms var(--md-ease-decel); }
+  @keyframes rail-in { from { background-size: 100% 100%, 30% 100%; } }
+  html:not(.apk) .tab:active .tab-ic { --sl: color-mix(in srgb, currentColor 14%, transparent); }
+  html:not(.apk) .dk-gear { margin-top: auto; }
+  html:not(.apk) .update-banner { left: 96px; }
+
+  /* контент и плеер — две скруглённые карточки на фоне окна */
+  html:not(.apk) .layout { padding: 8px 8px 8px 0; row-gap: 8px; }
+  html.desk .layout { padding-top: 40px; }
+  html:not(.apk) .layout > .panel { border-radius: 28px; background: var(--surf); }
+  html:not(.apk) .lib-actions { background: var(--surf); }
+  html:not(.apk) .layout .now { border-radius: 28px; border: 0; background: var(--md-container); padding: 10px 22px 10px 12px; }
+  html:not(.apk) .layout .now .cover { border-radius: 18px; }
+  html:not(.apk) .dh-wave { border-radius: 28px; }
+  html:not(.apk) .dh-tile { border-radius: 16px; }
+  html:not(.apk) .dh-art { border-radius: 20px; }
+}
+/* кнопки окна .exe — скруглённые, с отступом от края */
+html.desk .winctl { top: 4px; right: 6px; gap: 2px; }
+html.desk .winctl button { width: 40px; height: 30px; border-radius: 10px; }
+.dset-box { border-radius: 28px; }
+.dset-nav button { border-radius: 999px; padding: 11px 16px; }
+@media (min-width: 1000px) { .dl-cover { border-radius: 28px; } }
