@@ -1054,133 +1054,20 @@
     }
   }
 
-  // ---------- Итоги месяца (истории в духе Wrapped, из локальной статистики) ----------
-  const MONTHS = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
-  const monthName = (k) => MONTHS[+k.slice(5, 7) - 1] + ' ' + k.slice(0, 4);
-  const cap1 = (x) => x[0].toUpperCase() + x.slice(1);
+  // ---------- Итоги месяца и года: общий модуль js/wrapped.js (ПК и телефон) ----------
+  const openWrap = (mk) => !!(window.SquadWrapped && SquadWrapped.open(mk));
+  const closeWrap = () => !!(window.SquadWrapped && SquadWrapped.close());
+  if (window.SquadWrapped) SquadWrapped.onPlay = () => { wave = false; }; // топ итогов — не «Моя волна»
   function wrapCards() {
-    const keys = Object.keys(stats.m).filter((k) => stats.m[k].total >= 60).sort().reverse().slice(0, 2);
-    return keys.map((k, i) => '<button class="h-wrap" data-h="wrap" data-m="' + k + '"><span class="h-wrap-ic">' + svg(IC.sparkle) + '</span>' +
-      '<span><b>Итоги: ' + monthName(k) + '</b><small>' + (i === 0 && k === today().slice(0, 7) ? 'Месяц ещё идёт · ' : '') + dur(stats.m[k].total) + ' музыки</small></span></button>').join('');
+    const SW = window.SquadWrapped;
+    if (!SW) return '';
+    const { months, years } = SW.list();
+    const cur = today().slice(0, 7);
+    const card = (k, sub) => '<button class="h-wrap" data-h="wrap" data-m="' + k + '"><span class="h-wrap-ic">' + svg(IC.sparkle) + '</span>' +
+      '<span><b>Итоги: ' + SW.monthName(k) + '</b><small>' + sub + '</small></span></button>';
+    return months.slice(0, 2).map((k, i) => card(k, (i === 0 && k === cur ? 'Месяц ещё идёт · ' : '') + dur(stats.m[k].total) + ' музыки')).join('') +
+      years.slice(0, 1).map((y) => card(y, (y === cur.slice(0, 4) ? 'Год ещё идёт · ' : '') + 'весь год в музыке')).join('');
   }
-  // серии дней подряд: текущая (до сегодня/вчера) и лучшая за месяц
-  function streaks(mk) {
-    const days = new Set(Object.keys(stats.days).filter((d) => stats.days[d] >= 60));
-    let cur = 0;
-    for (let i = days.has(today()) ? 0 : 1; days.has(ymd(new Date(Date.now() - i * 864e5))); i++) cur++;
-    let best = 0, run = 0;
-    const y = +mk.slice(0, 4), m = +mk.slice(5, 7) - 1, n = new Date(y, m + 1, 0).getDate();
-    let active = 0;
-    for (let d = 1; d <= n; d++) {
-      if (days.has(ymd(new Date(y, m, d)))) { run++; active++; best = Math.max(best, run); } else run = 0;
-    }
-    return { cur, best, active };
-  }
-  function wrapData(mk) {
-    const M = stats.m[mk];
-    const tr = Object.keys(M.t).map((k) => {
-      const e = stats.t[k] || {}, t = S.byKey(k);
-      return { key: k, n: M.t[k][0], sec: M.t[k][1], title: (t && t.title) || e.title || '—', artist: (t && t.artist) || e.artist || '', thumb: t && t.thumb, genre: (t && t.genre) || e.genre, t };
-    }).filter((x) => x.sec > 0).sort((a, b) => b.n - a.n || b.sec - a.sec);
-    const sum = (field) => { const o = {}; tr.forEach((x) => { const v = x[field]; if (v) o[v] = (o[v] || 0) + x.sec; }); return Object.keys(o).sort((a, b) => o[b] - o[a]).map((k) => ({ name: k, sec: o[k] })); };
-    const hsum = M.h.reduce((a, b) => a + b, 0);
-    let peak = -1;
-    if (hsum >= 300) peak = M.h.indexOf(Math.max(...M.h));
-    return { mk, M, tr, artists: sum('artist'), genres: sum('genre'), peak, st: streaks(mk), plays: tr.reduce((a, x) => a + x.n, 0) };
-  }
-  const persona = (h) => h < 5 ? ['Ночной охотник', 'Самая музыка у тебя после полуночи'] : h < 11 ? ['Ранняя пташка', 'Утро начинается с трека'] :
-    h < 17 ? ['Дневной слушатель', 'Музыка фоном весь день'] : ['Вечерний вайб', 'Главное звучит после работы и учёбы'];
-  const wArt = (x) => x.thumb ? '<img class="w-cover" alt="" src="' + esc(x.thumb) + '">' :
-    '<div class="w-cover" style="background:linear-gradient(135deg,hsl(' + hue(x.artist + x.title) + ',70%,45%),hsl(' + ((hue(x.artist + x.title) + 50) % 360) + ',80%,30%))">' + esc((x.title[0] || 'S').toUpperCase()) + '</div>';
-  function wrapSlides(D) {
-    const name = MONTHS[+D.mk.slice(5, 7) - 1];
-    const min = Math.round(D.M.total / 60);
-    const sl = [];
-    sl.push('<div class="w-kick">SQUAD SOUND · итоги</div><div class="w-huge">' + cap1(name) + '</div><div class="w-sub">' + D.mk.slice(0, 4) +
-      '</div><p class="w-p">Посмотрим, как звучал твой месяц.</p>');
-    sl.push('<div class="w-kick">Ты слушал музыку</div><div class="w-huge">' + min.toLocaleString('ru') + '</div><div class="w-sub">' + plural(min, 'минуту', 'минуты', 'минут') + '</div>' +
-      '<p class="w-p">' + D.plays + ' ' + plural(D.plays, 'прослушивание', 'прослушивания', 'прослушиваний') + ' · ' + D.tr.length + ' ' + plural(D.tr.length, 'трек', 'трека', 'треков') +
-      (D.st.active ? ' · ' + D.st.active + ' ' + plural(D.st.active, 'день', 'дня', 'дней') + ' с музыкой' : '') + '</p>');
-    if (D.tr[0]) {
-      const x = D.tr[0];
-      sl.push('<div class="w-kick">Трек месяца</div>' + wArt(x) + '<div class="w-big">' + esc(x.title) + '</div><div class="w-sub">' + esc(x.artist) + '</div>' +
-        '<p class="w-p">' + x.n + ' ' + plural(x.n, 'раз', 'раза', 'раз') + ' · ' + dur(x.sec) + '</p>');
-    }
-    if (D.artists.length) {
-      sl.push('<div class="w-kick">Твои исполнители</div><ol class="w-list">' + D.artists.slice(0, 5).map((a, i) =>
-        '<li><b>' + (i + 1) + '</b><span>' + esc(a.name) + '</span><small>' + dur(a.sec) + '</small></li>').join('') + '</ol>');
-    }
-    if (D.tr.length > 1) {
-      sl.push('<div class="w-kick">Топ треков</div><ol class="w-list">' + D.tr.slice(0, 5).map((x, i) =>
-        '<li><b>' + (i + 1) + '</b><span>' + esc(x.title) + '<em>' + esc(x.artist) + '</em></span><small>' + x.n + '×</small></li>').join('') + '</ol>');
-    }
-    if (D.genres.length) sl.push('<div class="w-kick">Жанр месяца</div><div class="w-big">' + esc(D.genres[0].name) + '</div><p class="w-p">' + dur(D.genres[0].sec) + '</p>');
-    if (D.peak >= 0) {
-      const [t, d] = persona(D.peak);
-      const mx = Math.max(...D.M.h) || 1;
-      sl.push('<div class="w-kick">Твоё время</div><div class="w-big">' + t + '</div><div class="w-hours">' +
-        D.M.h.map((v, i) => '<i style="height:' + Math.max(3, Math.round(v / mx * 100)) + '%"' + (i === D.peak ? ' class="on"' : '') + '></i>').join('') +
-        '</div><div class="w-hl"><span>0</span><span>6</span><span>12</span><span>18</span><span>24</span></div><p class="w-p">' + d + '. Пик — ' + p2(D.peak) + ':00–' + p2((D.peak + 1) % 24) + ':00.</p>');
-    }
-    if (D.st.best > 1 || D.st.cur > 1) {
-      sl.push('<div class="w-kick">Серия</div><div class="w-huge">' + D.st.best + '</div><div class="w-sub">' + plural(D.st.best, 'день', 'дня', 'дней') + ' подряд с музыкой</div>' +
-        '<p class="w-p">' + (D.st.cur > 1 ? 'Сейчас серия ' + D.st.cur + ' ' + plural(D.st.cur, 'день', 'дня', 'дней') + '. Не прерывай!' : 'Лучшая серия за месяц.') + '</p>');
-    }
-    sl.push('<div class="w-kick">' + cap1(name) + ' в цифрах</div><div class="w-sum">' +
-      '<div><b>' + min.toLocaleString('ru') + '</b><span>минут</span></div><div><b>' + D.tr.length + '</b><span>треков</span></div>' +
-      '<div><b>' + D.st.best + '</b><span>дней подряд</span></div><div><b>' + D.plays + '</b><span>прослушиваний</span></div></div>' +
-      (D.tr[0] ? '<p class="w-p">Трек месяца: <b>' + esc(D.tr[0].title) + '</b>' + (D.artists[0] ? '<br>Исполнитель: <b>' + esc(D.artists[0].name) + '</b>' : '') + '</p>' : '') +
-      '<div class="w-acts">' + (D.tr.some((x) => x.t) ? '<button class="btn" data-w="play">' + svg(IC.play) + ' Включить топ месяца</button><button class="btn ghost" data-w="save">Сохранить плейлистом</button>' : '') + '</div>');
-    return sl;
-  }
-  const wrap = document.createElement('div');
-  wrap.className = 'wrap-ov';
-  wrap.innerHTML = '<div class="w-bars"></div><button class="w-x" aria-label="Закрыть">' + svg(IC.close) + '</button><div class="w-slide"></div>';
-  document.body.appendChild(wrap);
-  const W = { i: 0, sl: [], D: null, timer: 0 };
-  function wShow(i) {
-    if (i < 0) i = 0;
-    if (i >= W.sl.length) { closeWrap(); return; }
-    W.i = i;
-    const slide = wrap.querySelector('.w-slide');
-    slide.innerHTML = '<div class="w-in">' + W.sl[i] + '</div>';
-    wrap.style.setProperty('--wh', (hue(W.D.mk) + i * 37) % 360);
-    wrap.querySelectorAll('.w-bars i').forEach((b, k) => { b.className = k < i ? 'done' : k === i ? 'run' : ''; });
-    clearTimeout(W.timer);
-    if (i < W.sl.length - 1) W.timer = setTimeout(() => wShow(W.i + 1), 7000);
-  }
-  function openWrap(mk) {
-    if (!stats.m[mk]) return;
-    W.D = wrapData(mk);
-    W.sl = wrapSlides(W.D);
-    wrap.querySelector('.w-bars').innerHTML = W.sl.map(() => '<i></i>').join('');
-    wrap.classList.add('show');
-    root.classList.add('wrap-open');
-    wShow(0);
-  }
-  function closeWrap() {
-    if (!wrap.classList.contains('show')) return false;
-    clearTimeout(W.timer);
-    wrap.classList.remove('show');
-    root.classList.remove('wrap-open');
-    return true;
-  }
-  wrap.addEventListener('click', (e) => {
-    if (e.target.closest('.w-x')) { closeWrap(); return; }
-    const b = e.target.closest('[data-w]');
-    if (b) {
-      const keys = W.D.tr.filter((x) => x.t).slice(0, 25).map((x) => x.key);
-      if (b.dataset.w === 'play') { closeWrap(); wave = false; S.play(keys, 0, false); }
-      else {
-        const name = 'Итоги: ' + monthName(W.D.mk);
-        let pl = S.playlists.find((p) => p.name === name);
-        if (!pl) { pl = { id: 'w' + Date.now().toString(36), name, keys: [] }; S.playlists.push(pl); }
-        pl.keys = keys; S.savePlaylists(); S.toast('Плейлист «' + name + '» сохранён');
-      }
-      return;
-    }
-    wShow(W.i + (e.clientX < innerWidth * 0.3 ? -1 : 1));
-  });
 
   // ---------- Свои пресеты звука и резервная копия настроек (файл) ----------
   const presets = ls.get('presets', []); // [{name, s: состояние движка}]

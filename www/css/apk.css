@@ -232,7 +232,7 @@ html.apk #tracklist .track.sw-l::before { content: '♥  В любимые'; jus
 html.apk #tracklist .track.sw-go::before { background: var(--accent); color: var(--on-accent); }
 
 /* Итоги месяца */
-.wrap-ov { display: none; }
+.wrap-ov, .wrap-back { display: none; }
 html.apk .h-wrap { display: flex; align-items: center; gap: 14px; width: 100%; margin: 0 0 10px; padding: 14px 16px; border: 0; border-radius: 24px; text-align: left; color: #fff;
   background: linear-gradient(120deg, var(--accent), color-mix(in srgb, var(--accent2) 70%, #3a0a6e)); font: inherit; }
 html.apk .h-wrap span { display: flex; flex-direction: column; }
@@ -245,41 +245,41 @@ html.apk .wrap-ov.show { display: flex; position: fixed; inset: 0; z-index: 90; 
   transition: background .5s; animation: w-in .3s ease; padding: calc(env(safe-area-inset-top, 0px) + 12px) 22px calc(env(safe-area-inset-bottom, 0px) + 24px); }
 @keyframes w-in { from { opacity: 0; transform: scale(.97); } }
 html.apk.wrap-open .bnav { transform: translateY(110%); }
-html.apk .w-bars { display: flex; gap: 4px; }
-html.apk .w-bars i { flex: 1; height: 3px; border-radius: 2px; background: rgba(255,255,255,.3); overflow: hidden; position: relative; }
-html.apk .w-bars i::after { content: ''; position: absolute; inset: 0; background: #fff; transform: scaleX(0); transform-origin: left; }
-html.apk .w-bars i.done::after { transform: scaleX(1); }
-html.apk .w-bars i.run::after { animation: w-bar 7s linear forwards; }
-html.apk .w-bars i.run:last-child::after { animation: none; transform: scaleX(1); }
+.wrap-ov .w-bars { display: flex; gap: 4px; }
+.wrap-ov .w-bars i { flex: 1; height: 3px; border-radius: 2px; background: rgba(255,255,255,.3); overflow: hidden; position: relative; }
+.wrap-ov .w-bars i::after { content: ''; position: absolute; inset: 0; background: #fff; transform: scaleX(0); transform-origin: left; }
+.wrap-ov .w-bars i.done::after { transform: scaleX(1); }
+.wrap-ov .w-bars i.run::after { animation: w-bar 7s linear forwards; }
+.wrap-ov .w-bars i.run:last-child::after { animation: none; transform: scaleX(1); }
 @keyframes w-bar { to { transform: scaleX(1); } }
-html.apk .w-x { position: absolute; right: 12px; top: calc(env(safe-area-inset-top, 0px) + 24px); width: 44px; height: 44px; border: 0; border-radius: 50%; background: rgba(0,0,0,.25); color: #fff; display: grid; place-items: center; z-index: 2; }
-html.apk .w-x svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
-html.apk .w-slide { flex: 1; display: flex; align-items: center; }
-html.apk .w-in { width: 100%; animation: w-up .45s cubic-bezier(.2,.8,.2,1); }
+.wrap-ov .w-x { position: absolute; right: 12px; top: calc(env(safe-area-inset-top, 0px) + 24px); width: 44px; height: 44px; border: 0; border-radius: 50%; background: rgba(0,0,0,.25); color: #fff; display: grid; place-items: center; z-index: 2; }
+.wrap-ov .w-x svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.wrap-ov .w-slide { flex: 1; display: flex; align-items: center; }
+.wrap-ov .w-in { width: 100%; animation: w-up .45s cubic-bezier(.2,.8,.2,1); }
 @keyframes w-up { from { opacity: 0; transform: translateY(24px); } }
-html.apk .w-kick { text-transform: uppercase; letter-spacing: .12em; font-size: 12px; font-weight: 700; opacity: .8; margin-bottom: 14px; }
-html.apk .w-huge { font-size: clamp(56px, 20vw, 96px); font-weight: 800; line-height: 1; letter-spacing: -.03em; }
-html.apk .w-big { font-size: 32px; font-weight: 800; line-height: 1.1; margin-top: 18px; word-break: break-word; }
-html.apk .w-sub { font-size: 20px; font-weight: 600; opacity: .9; margin-top: 6px; }
-html.apk .w-p { font-size: 16px; opacity: .85; margin: 18px 0 0; line-height: 1.45; }
-html.apk .w-cover { display: grid; place-items: center; width: min(64vw, 280px); aspect-ratio: 1; object-fit: cover; border-radius: 28px; font-size: 96px; font-weight: 800; box-shadow: 0 24px 60px rgba(0,0,0,.5); }
-html.apk .w-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 14px; }
-html.apk .w-list li { display: flex; align-items: center; gap: 14px; font-size: 20px; font-weight: 700; }
-html.apk .w-list li b { width: 28px; font-size: 26px; opacity: .7; }
-html.apk .w-list li span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-html.apk .w-list li em { display: block; font-style: normal; font-size: 13px; font-weight: 500; opacity: .75; overflow: hidden; text-overflow: ellipsis; }
-html.apk .w-list li small { font-size: 13px; opacity: .8; font-weight: 500; }
-html.apk .w-hours { display: flex; align-items: flex-end; gap: 3px; height: 120px; margin-top: 24px; }
-html.apk .w-hours i { flex: 1; border-radius: 3px; background: rgba(255,255,255,.35); }
-html.apk .w-hours i.on { background: #fff; }
-html.apk .w-hl { display: flex; justify-content: space-between; font-size: 11px; opacity: .7; margin-top: 6px; }
-html.apk .w-sum { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-html.apk .w-sum div { background: rgba(0,0,0,.22); border-radius: 22px; padding: 16px; }
-html.apk .w-sum b { display: block; font-size: 30px; font-weight: 800; }
-html.apk .w-sum span { font-size: 13px; opacity: .8; }
-html.apk .w-acts { display: flex; flex-direction: column; gap: 10px; margin-top: 22px; }
-html.apk .w-acts .btn { justify-content: center; }
-html.apk .w-acts .btn svg { width: 18px; height: 18px; fill: currentColor; }
+.wrap-ov .w-kick { text-transform: uppercase; letter-spacing: .12em; font-size: 12px; font-weight: 700; opacity: .8; margin-bottom: 14px; }
+.wrap-ov .w-huge { font-size: clamp(56px, 20vw, 96px); font-weight: 800; line-height: 1; letter-spacing: -.03em; }
+.wrap-ov .w-big { font-size: 32px; font-weight: 800; line-height: 1.1; margin-top: 18px; word-break: break-word; }
+.wrap-ov .w-sub { font-size: 20px; font-weight: 600; opacity: .9; margin-top: 6px; }
+.wrap-ov .w-p { font-size: 16px; opacity: .85; margin: 18px 0 0; line-height: 1.45; }
+.wrap-ov .w-cover { display: grid; place-items: center; width: min(64vw, 280px); aspect-ratio: 1; object-fit: cover; border-radius: 28px; font-size: 96px; font-weight: 800; box-shadow: 0 24px 60px rgba(0,0,0,.5); }
+.wrap-ov .w-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 14px; }
+.wrap-ov .w-list li { display: flex; align-items: center; gap: 14px; font-size: 20px; font-weight: 700; }
+.wrap-ov .w-list li b { width: 28px; font-size: 26px; opacity: .7; }
+.wrap-ov .w-list li span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wrap-ov .w-list li em { display: block; font-style: normal; font-size: 13px; font-weight: 500; opacity: .75; overflow: hidden; text-overflow: ellipsis; }
+.wrap-ov .w-list li small { font-size: 13px; opacity: .8; font-weight: 500; }
+.wrap-ov .w-hours { display: flex; align-items: flex-end; gap: 3px; height: 120px; margin-top: 24px; }
+.wrap-ov .w-hours i { flex: 1; border-radius: 3px; background: rgba(255,255,255,.35); }
+.wrap-ov .w-hours i.on { background: #fff; }
+.wrap-ov .w-hl { display: flex; justify-content: space-between; font-size: 11px; opacity: .7; margin-top: 6px; }
+.wrap-ov .w-sum { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.wrap-ov .w-sum div { background: rgba(0,0,0,.22); border-radius: 22px; padding: 16px; }
+.wrap-ov .w-sum b { display: block; font-size: 30px; font-weight: 800; }
+.wrap-ov .w-sum span { font-size: 13px; opacity: .8; }
+.wrap-ov .w-acts { display: flex; flex-direction: column; gap: 10px; margin-top: 22px; }
+.wrap-ov .w-acts .btn { justify-content: center; }
+.wrap-ov .w-acts .btn svg { width: 18px; height: 18px; fill: currentColor; }
 
 /* Свой фон приложения и обложки */
 .app-bg, .np-custom { display: none; }
