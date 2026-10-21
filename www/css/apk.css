@@ -1,6 +1,5 @@
 /* Интерфейс APK (js/apk.js): включается только с классом html.apk, .exe выглядит как раньше */
 .bnav, .search-seg, .np-bg, .np-top, .np-acts, .seg, .sheet-wrap { display: none; }
-html:not(.apk) #panel-home { display: none !important; }
 
 /* ---------- Каркас ---------- */
 html.apk .topbar { flex-direction: row; align-items: center; gap: 10px; padding: 10px 16px 6px; border: 0; background: transparent; }
