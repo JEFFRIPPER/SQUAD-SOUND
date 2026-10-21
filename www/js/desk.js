@@ -1,4 +1,4 @@
-/* Тексты песен и караоке на ПК: кнопки в панели «Сейчас играет» и текст на всё окно с подсветкой строки.
+/* ПК: кнопки «Текст»/«Караоке», плеер на всё окно с текстом и подсветкой строки, главная.
  * Только для .exe/браузера (html без .apk). Поиск текстов — общий модуль js/lyrics.js.
  */
 (function () {
@@ -26,16 +26,56 @@
   bKara.innerHTML = svg(IC.mic) + 'Караоке';
   acts.append(bLyr, bKara);
 
-  // ---------- Текст на всё окно ----------
+  // ---------- Плеер на всё окно: обложка и кнопки слева, текст справа ----------
   const ov = document.createElement('div');
   ov.className = 'dl';
-  ov.innerHTML = '<div class="dl-bg"></div><header class="dl-head"><img class="dl-art" alt=""><div class="dl-meta"><b></b><span></span></div>' +
+  ov.innerHTML = '<div class="dl-bg"></div><i class="dl-tint"></i><header class="dl-head"><img class="dl-art" alt=""><div class="dl-meta"><b></b><span></span></div>' +
+    '<div class="dl-off" title="Сдвиг текста для этого трека"><button data-off="-1" title="Текст позже">−0,1</button><span>0,0 с</span><button data-off="1" title="Текст раньше">+0,1</button></div>' +
     '<button class="chip dl-kara">' + svg(IC.mic) + '<span>Караоке</span></button>' +
     '<button class="icon-btn dl-close" title="Закрыть (Esc)">' + svg(IC.close) + '</button></header>' +
-    '<div class="dl-body"><div class="dl-lines"></div></div>';
+    '<div class="dl-main"><aside class="dl-side"><div class="dl-cover"><img alt=""></div><div class="dl-np"><b></b><span></span></div>' +
+    '<div class="dl-seek"><input type="range" min="0" max="1000" value="0"><div><span>0:00</span><span>0:00</span></div></div>' +
+    '<div class="dl-ctl"></div></aside><div class="dl-body"><div class="dl-lines"></div></div></div>';
   document.body.appendChild(ov);
   const body = ov.querySelector('.dl-body'), box = ov.querySelector('.dl-lines'), kb = ov.querySelector('.dl-kara');
-  const st = { open: false, kara: false, key: null, lines: null, cur: -1, raf: 0 };
+  const sk = ov.querySelector('.dl-seek input'), [tc, td] = ov.querySelectorAll('.dl-seek span');
+  const st = { open: false, kara: false, key: null, lines: null, cur: -1, raf: 0, drag: false };
+
+  // кнопки управления — копии кнопок нижнего плеера, нажатие уходит в оригинал
+  const ctl = ov.querySelector('.dl-ctl');
+  ['btn-shuffle', 'btn-prev', 'btn-play', 'btn-next', 'btn-repeat'].forEach((id) => {
+    const o = $(id), c = o.cloneNode(true);
+    c.removeAttribute('id');
+    c.querySelectorAll('[id]').forEach((e) => e.removeAttribute('id'));
+    c.onclick = () => o.click();
+    ctl.appendChild(c);
+    const sync = () => {
+      c.className = o.className;
+      const b1 = o.querySelector('.badge'), b2 = c.querySelector('.badge');
+      if (b1 && b2) b2.className = b1.className;
+    };
+    new MutationObserver(sync).observe(o, { attributes: true, subtree: true, attributeFilter: ['class'] });
+  });
+
+  const fmt = (s) => { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+  sk.addEventListener('input', () => { st.drag = true; const d = S.time().dur; tc.textContent = fmt(d * sk.value / 1000); sk.style.setProperty('--p', sk.value / 10 + '%'); });
+  sk.addEventListener('change', () => { S.seek(S.time().dur * sk.value / 1000); st.drag = false; });
+
+  // сдвиг синхронизации текста: свой для каждого трека, шаг 0,1 с
+  const OFF = 'squad.lyr.off';
+  let offs = {};
+  try { offs = JSON.parse(localStorage.getItem(OFF)) || {}; } catch (_) {}
+  const offOf = () => offs[st.key] || 0;
+  const offTxt = ov.querySelector('.dl-off span');
+  const showOff = () => { const v = offOf(); offTxt.textContent = (v > 0 ? '+' : '') + v.toFixed(1).replace('.', ',') + ' с'; };
+  ov.querySelector('.dl-off').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-off]');
+    if (!b || !st.key) return;
+    const v = Math.round((offOf() + b.dataset.off * 0.1) * 10) / 10;
+    if (v) offs[st.key] = v; else delete offs[st.key];
+    try { localStorage.setItem(OFF, JSON.stringify(offs)); } catch (_) {}
+    showOff(); st.cur = -2;
+  });
 
   function setKara(on) {
     st.kara = on;
@@ -70,22 +110,42 @@
   body.addEventListener('click', (e) => {
     if (e.target.closest('[data-dl="retry"]')) { const t = S.cur(); if (t) { L.forget(t.key); load(); } return; }
     const l = e.target.closest('[data-t]');
-    if (l) S.seek(+l.dataset.t);
+    if (l) S.seek(Math.max(0, +l.dataset.t - offOf()));
   });
 
+  // средний цвет обложки — им подкрашен фон
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 12;
+  function tint(img) {
+    try {
+      const g = cv.getContext('2d', { willReadFrequently: true });
+      g.drawImage(img, 0, 0, 12, 12);
+      const d = g.getImageData(0, 0, 12, 12).data;
+      let r = 0, gr = 0, b = 0, n = 0;
+      for (let i = 0; i < d.length; i += 4) { r += d[i]; gr += d[i + 1]; b += d[i + 2]; n++; }
+      ov.style.setProperty('--dl-tint', Math.round(r / n) + ',' + Math.round(gr / n) + ',' + Math.round(b / n));
+    } catch (_) { ov.style.removeProperty('--dl-tint'); } // чужая картинка без CORS — остаётся красный
+  }
+  const big = ov.querySelector('.dl-cover img');
+  big.addEventListener('load', () => tint(big));
   function head(t) {
-    ov.querySelector('.dl-meta b').textContent = t ? t.title : 'Ничего не играет';
-    ov.querySelector('.dl-meta span').textContent = t ? t.artist || '' : '';
+    const title = t ? t.title : 'Ничего не играет', artist = t ? t.artist || '' : '';
+    ov.querySelector('.dl-meta b').textContent = ov.querySelector('.dl-np b').textContent = title;
+    ov.querySelector('.dl-meta span').textContent = ov.querySelector('.dl-np span').textContent = artist;
     const src = $('cover-img').getAttribute('src') || '';
     ov.querySelector('.dl-art').src = src;
+    if (big.getAttribute('src') !== src) big.src = src;
     ov.querySelector('.dl-bg').style.backgroundImage = src ? 'url("' + src.replace(/"/g, '%22') + '")' : '';
   }
+  new MutationObserver(() => { if (st.open) head(S.cur()); }).observe($('cover-img'), { attributes: true, attributeFilter: ['src'] });
   async function load() {
     const t = S.cur();
-    cancelAnimationFrame(st.raf);
     head(t);
+    st.key = t ? t.key : null; st.lines = null; st.cur = -1;
+    showOff();
+    cancelAnimationFrame(st.raf);
+    loop();
     if (!t) { box.innerHTML = '<p class="dl-hint">Включите трек — здесь появится его текст.</p>'; return; }
-    st.key = t.key; st.lines = null; st.cur = -1;
     box.innerHTML = '<p class="dl-hint">Ищем текст…</p>';
     try {
       const r = await L.get(t);
@@ -96,29 +156,38 @@
       if (lines.length) {
         st.lines = lines;
         box.innerHTML = lines.map((l, i) => '<p data-i="' + i + '" data-t="' + l.t + '">' + (esc(l.text) || '♪') + '</p>').join('');
-        tick();
       } else box.innerHTML = '<div class="dl-plain">' + esc(r.plain).replace(/\n/g, '<br>') + '</div>';
       if (r.src) box.insertAdjacentHTML('beforeend', '<p class="dl-src">Текст: ' + esc(r.src) + '</p>');
     } catch (_) {
       if (st.key === t.key) box.innerHTML = '<p class="dl-hint">Не удалось загрузить текст. Проверьте интернет.</p><button class="chip" data-dl="retry">Ещё раз</button>';
     }
   }
-  function tick() {
-    if (!st.open || !st.lines) return;
-    const now = S.time().cur + 0.25;
-    let i = -1;
-    for (let k = 0; k < st.lines.length && st.lines[k].t <= now; k++) i = k;
-    if (i !== st.cur) {
-      const prev = box.querySelector('.on');
-      if (prev) prev.classList.remove('on');
-      const el = box.querySelector('[data-i="' + i + '"]');
-      if (el) {
-        el.classList.add('on');
-        body.scrollTo({ top: el.offsetTop - body.clientHeight / 2 + el.offsetHeight / 2, behavior: st.cur < 0 ? 'auto' : 'smooth' });
-      } else if (i < 0) body.scrollTo({ top: 0 });
-      st.cur = i;
+  function loop() {
+    if (!st.open) return;
+    const tm = S.time();
+    if (!st.drag) {
+      const p = tm.dur ? tm.cur / tm.dur : 0;
+      sk.value = Math.round(p * 1000);
+      sk.style.setProperty('--p', p * 100 + '%');
+      tc.textContent = fmt(tm.cur);
     }
-    st.raf = requestAnimationFrame(tick);
+    td.textContent = fmt(tm.dur);
+    if (st.lines) {
+      const now = tm.cur + 0.25 + offOf();
+      let i = -1;
+      for (let k = 0; k < st.lines.length && st.lines[k].t <= now; k++) i = k;
+      if (i !== st.cur) {
+        const prev = box.querySelector('.on');
+        if (prev) prev.classList.remove('on');
+        const el = box.querySelector('[data-i="' + i + '"]');
+        if (el) {
+          el.classList.add('on');
+          body.scrollTo({ top: el.offsetTop - body.clientHeight / 2 + el.offsetHeight / 2, behavior: st.cur === -1 ? 'auto' : 'smooth' });
+        } else if (i < 0) body.scrollTo({ top: 0 });
+        st.cur = i;
+      }
+    }
+    st.raf = requestAnimationFrame(loop);
   }
   S.on('track', () => { if (st.open && (S.cur() || {}).key !== st.key) load(); });
 
