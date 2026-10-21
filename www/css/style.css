@@ -1080,3 +1080,26 @@ html:not(.apk) .wrap-ov .w-acts .btn { cursor: pointer; }
 .dh-wrap b { font-size: 17px; }
 .dh-wrap b::first-letter { text-transform: uppercase; }
 .dh-wrap small { opacity: .85; font-size: 12px; }
+/* «Поделиться»: картинка трека и «Слушать вместе» */
+.share-dlg { width: min(460px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; }
+.share-dlg h3 { margin: 0 0 12px; }
+.sh-seg { display: flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; margin: 0 0 14px; }
+.sh-seg button { flex: 1; min-height: 38px; border: 0; background: none; color: var(--text); font-weight: 600; font-size: 14px; padding: 0 8px; }
+.sh-seg button + button { border-left: 1px solid var(--line); }
+.sh-seg button.on { background: var(--accent); color: var(--on-accent); }
+.sh-seg button:disabled { opacity: .4; }
+.sh-pane[hidden] { display: none; }
+.sh-prev { position: relative; width: min(240px, 60%); aspect-ratio: 9 / 16; margin: 0 auto 14px; border-radius: 16px; overflow: hidden;
+  background: var(--md-container-highest, var(--bg)); box-shadow: 0 10px 30px rgba(0,0,0,.35); }
+.sh-prev img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.sh-prev img:not([src]) { visibility: hidden; }
+.sh-busy { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 14px; }
+.sh-busy[hidden] { display: none; }
+.sh-line { margin-bottom: 14px; }
+.sh-acts { justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.sh-acts .btn[hidden] { display: none; }
+.sh-acts .btn:disabled { opacity: .45; }
+.sh-tg-hint { margin: 0 0 12px; }
+.sf.sh-join { margin-bottom: 10px; }
+.sf.sh-join textarea.search { height: auto; min-height: 84px; padding: 10px 14px; resize: none; font: inherit; font-size: 13px; line-height: 1.4; }
+html.desk .share-wrap { -webkit-app-region: no-drag; }
