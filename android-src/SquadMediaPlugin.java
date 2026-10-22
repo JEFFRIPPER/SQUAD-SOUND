@@ -127,7 +127,7 @@ public class SquadMediaPlugin extends Plugin {
     // POST формы — скробблинг Last.fm и распознавание песни AudD; GET — плейлист по ссылке (Яндекс Музыка, Deezer, Spotify).
     private static final String[] POST_OK = { "https://ws.audioscrobbler.com/", "https://api.audd.io/" };
     private static final String[] GET_OK = { "https://ws.audioscrobbler.com/2.0/?", "https://api.music.yandex.net/", "https://api.deezer.com/", "https://open.spotify.com/embed/",
-        "https://itunes.apple.com/search?" };
+        "https://itunes.apple.com/search?", "https://raw.githubusercontent.com/jaakkopasanen/AutoEq/" };
     // обложки из каталогов (поиск обложки по исполнителю и названию)
     private static final String[] IMG_OK = { "https://cdn-images.dzcdn.net/", "https://e-cdns-images.dzcdn.net/", "https://cdns-images.dzcdn.net/",
         "https://is1-ssl.mzstatic.com/", "https://is2-ssl.mzstatic.com/", "https://is3-ssl.mzstatic.com/", "https://is4-ssl.mzstatic.com/", "https://is5-ssl.mzstatic.com/" };
