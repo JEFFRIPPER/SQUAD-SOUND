@@ -302,6 +302,8 @@
   // теги файла, поверх — правки пользователя (название, исполнитель, обложка из интернета)
   async function loadMeta(t) {
     await loadTags(t);
+    const bk = await metaDb.get('bk:' + t.key);
+    if (bk) { t.bpm = bk.bpm > 0 ? bk.bpm : -1; t.tone = bk.key || ''; }
     const ed = await metaDb.get('edit:' + t.key);
     if (ed) { t.netArt = !!ed.art; applyMeta(t, ed); }
   }
@@ -402,7 +404,16 @@
     album: ['По альбому', (a, b) => cmp(a.album, b.album) || (a.disc - b.disc) || (a.no - b.no) || cmp(a.title, b.title)],
     year: ['По году', (a, b) => (b.year - a.year) || cmp(a.album, b.album) || (a.no - b.no)],
     name: ['По имени файла', (a, b) => cmp(a.name, b.name)],
+    bpm: ['По темпу (BPM)', (a, b) => bpmOrd(a) - bpmOrd(b) || cmp(a.title, b.title)],
+    tone: ['По тональности', (a, b) => toneOrd(a) - toneOrd(b) || bpmOrd(a) - bpmOrd(b) || cmp(a.title, b.title)],
   };
+  // по кругу Камелота: соседние тональности сводятся без фальши (1A, 1B, 2A, …)
+  function toneOrd(t) {
+    const c = t.tone && window.SquadAnalyze ? SquadAnalyze.camelot(t.tone) : '';
+    return c ? parseInt(c, 10) * 2 + (c.endsWith('B') ? 1 : 0) : 999;
+  }
+  const bpmOrd = (t) => (t.bpm > 0 ? t.bpm : 999); // -1 — не разобрался, 0 — ещё не разбирали
+  const bkText = (t) => (t.bpm > 0 ? ' · ' + t.bpm + ' BPM' : '') + (t.tone ? ' · ' + t.tone : '');
   const inGroupSort = { artists: SORTS.album[1], albums: SORTS.album[1], genres: SORTS.artist[1], folders: SORTS.name[1] };
 
   const matches = (t, q) => !q || (t.title + ' ' + t.artist + ' ' + t.album + ' ' + t.name).toLowerCase().includes(q);
@@ -583,7 +594,7 @@
       rows[idx] = '<li class="track' + (playing ? ' playing' : '') + (tab === 'queue' && it.pos < qpos ? ' done' : '') + '" data-idx="' + idx + '">' +
         artHtml(t, esc((t.title[0] || '?').toUpperCase())) +
         '<div class="t-info"><div class="t-title">' + esc(t.title) + '</div><div class="t-artist">' +
-        esc(t.artist + (t.album && tab !== 'albums' ? ' · ' + t.album : '')) + '</div></div>' + tail;
+        esc(t.artist + (t.album && tab !== 'albums' ? ' · ' + t.album : '') + (settings.sort === 'bpm' || settings.sort === 'tone' ? bkText(t) : '')) + '</div></div>' + tail;
     });
     // первый экран — сразу, остальное следующим кадром, чтобы переключение вкладок не подвисало.
     // Перерисовка того же списка (смена трека) — целиком сразу: иначе список на миг короче и прокрутку кидает наверх
@@ -977,6 +988,51 @@
     });
   }, 200);
 
+  // ---------- Темп и тональность ----------
+  // Текущий трек разбираем через ~4 с игры (файл уже в памяти деки). На ПК в простое — остальную медиатеку
+  // по одному треку. На телефоне только играющий трек, и не больше 40 МБ: декодирование занимает память.
+  const bkBusy = new Set();
+  async function analyzeTrack(t, buf) {
+    if (!t || t.bpm || bkBusy.has(t.key) || !window.SquadAnalyze) return;
+    bkBusy.add(t.key);
+    try {
+      const r = await SquadAnalyze.run(buf);
+      t.bpm = r.bpm > 0 ? r.bpm : -1; t.tone = r.key || '';
+      metaDb.put('bk:' + t.key, { bpm: r.bpm || 0, key: t.tone });
+      if (t === curTrack()) showMeta();
+      if (settings.sort === 'bpm' || settings.sort === 'tone') scheduleRender();
+    } catch (e) {
+      metaDb.put('bk:' + t.key, { bpm: 0, key: '', err: 1 }); // битый или очень короткий — второй раз не мучаем
+      t.bpm = -1;
+    } finally { bkBusy.delete(t.key); }
+  }
+  setInterval(async () => {
+    const t = curTrack(), a = A();
+    if (!t || t.bpm || a.paused || a.currentTime < 4 || !a.src || a.dataset.key !== t.key || bkBusy.size) return;
+    try {
+      const r = await fetch(a.src);
+      const b = await r.blob();
+      if (isAndroid && b.size > 40 * 1024 * 1024) { t.bpm = -1; return; }
+      analyzeTrack(t, await b.arrayBuffer());
+    } catch (_) {}
+  }, 2000);
+  if (!isAndroid) {
+    setInterval(async () => {
+      if (bkBusy.size || document.hidden || !scanBkOk()) return;
+      const t = tracks.find((x) => !x.bpm && x.metaDone && (x.file || (x.path && native)));
+      if (!t) return;
+      try {
+        let buf;
+        if (t.file) buf = await t.file.arrayBuffer();
+        else { const u = new Uint8Array(await native.readFile(t.path)); buf = u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength); }
+        if (buf.byteLength > 80 * 1024 * 1024) { t.bpm = -1; return; }
+        await analyzeTrack(t, buf);
+      } catch (_) { t.bpm = -1; }
+    }, 3000);
+  }
+  // в фоне разбираем, только когда не идёт загрузка медиатеки и не грузится трек
+  const scanBkOk = () => !scanning;
+
   // Поколение загрузки на каждую деку: опоздавшая загрузка (долгое скачивание) не перезапишет то, что уже играет
   const deckGen = [0, 0];
   async function loadDeck(deck, t) {
@@ -1136,7 +1192,7 @@
   function showMeta() {
     const t = curTrack();
     $('np-title').textContent = t ? t.title : 'Ничего не играет';
-    $('np-artist').textContent = t ? t.artist + (t.album ? ' · ' + t.album : '') : 'Добавьте треки';
+    $('np-artist').textContent = t ? t.artist + (t.album ? ' · ' + t.album : '') + bkText(t) : 'Добавьте треки';
     $('mini-title').textContent = t ? t.title : '—';
     $('mini-artist').textContent = t ? t.artist : '';
     $('cover-letter').textContent = t ? (t.title[0] || 'S').toUpperCase() : 'S';
