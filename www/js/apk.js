@@ -742,15 +742,16 @@
     return { get: (k) => tx('readonly', (st) => st.get(k)), set: (k, v) => tx('readwrite', (st) => st.put(v, k)), del: (k) => tx('readwrite', (st) => st.delete(k)),
       keys: () => tx('readonly', (st) => st.getAllKeys()) };
   })();
-  const MAX_IMG = 30 * 1024 * 1024;
-  function pickImage() {
+  const MAX_IMG = 30 * 1024 * 1024, MAX_VID = 60 * 1024 * 1024;
+  function pickImage(video) {
     return new Promise((res) => {
       const inp = document.createElement('input');
-      inp.type = 'file'; inp.accept = 'image/*';
+      inp.type = 'file'; inp.accept = video ? 'image/*,video/*' : 'image/*';
       inp.onchange = () => {
         const f = inp.files && inp.files[0];
         if (!f) return res(null);
-        if (f.size > MAX_IMG) { S.toast('Файл больше 30 МБ'); return res(null); }
+        const vid = /^video\//.test(f.type);
+        if (f.size > (vid ? MAX_VID : MAX_IMG)) { S.toast(vid ? 'Видео больше 60 МБ' : 'Файл больше 30 МБ'); return res(null); }
         res(f);
       };
       inp.click();
@@ -776,33 +777,50 @@
   bgVars();
   if (prefs.appBg) idb.get('appBg').then((b) => applyAppBg(b || null)).catch(() => {});
 
-  // свои обложки: для трека (cover:<key>) и общая для треков без обложки (cover:*)
+  // свои обложки: для трека (cover:<key>), альбома (cover:album:<название>) и общая для треков без обложки (cover:*).
+  // Картинка, GIF или короткое видео (как Canvas): видео крутится без звука по кругу и спит, когда плеер закрыт
   const covers = new Set(ls.get('covers', []));
   const coverUrls = new Map();
   const npCustom = document.createElement('img');
   npCustom.className = 'np-custom';
   npCustom.alt = '';
-  $('cover').appendChild(npCustom);
+  const npVideo = document.createElement('video');
+  npVideo.className = 'np-custom np-vid';
+  npVideo.muted = true; npVideo.loop = true; npVideo.playsInline = true; npVideo.preload = 'auto';
+  npVideo.setAttribute('muted', ''); npVideo.setAttribute('playsinline', '');
+  $('cover').append(npCustom, npVideo);
   let customFor = null;
   async function coverUrl(id) {
     if (coverUrls.has(id)) return coverUrls.get(id);
     const b = await idb.get('cover:' + id).catch(() => null);
-    const u = b ? URL.createObjectURL(b) : null;
+    const u = b ? { url: URL.createObjectURL(b), video: /^video\//.test(b.type || '') } : null;
     coverUrls.set(id, u);
     return u;
   }
-  function dropCoverUrl(id) { const u = coverUrls.get(id); if (u) URL.revokeObjectURL(u); coverUrls.delete(id); }
+  function dropCoverUrl(id) { const u = coverUrls.get(id); if (u) URL.revokeObjectURL(u.url); coverUrls.delete(id); }
+  const albumId = (t) => (t && t.album ? 'album:' + t.album.toLowerCase() : '');
+  function vidPlay() {
+    const on = !!npVideo.getAttribute('src') && S.settings.tab === 'player' && !document.hidden;
+    if (on && npVideo.paused) npVideo.play().catch(() => {});
+    else if (!on && !npVideo.paused) npVideo.pause();
+  }
   async function syncCustomCover() {
     const t = S.cur();
-    const id = t && covers.has(t.key) ? t.key : t && !t.thumb && covers.has('*') ? '*' : null;
+    const id = !t ? null : covers.has(t.key) ? t.key : albumId(t) && covers.has(albumId(t)) ? albumId(t) : !t.thumb && covers.has('*') ? '*' : null;
     customFor = t ? t.key : null;
     const u = id ? await coverUrl(id) : null;
     if (customFor !== (t ? t.key : null)) return;
-    if (u) npCustom.src = u; else npCustom.removeAttribute('src');
+    const img = u && !u.video ? u.url : '', vid = u && u.video ? u.url : '';
+    if (img) npCustom.src = img; else npCustom.removeAttribute('src');
+    if (vid !== (npVideo.getAttribute('src') || '')) { if (vid) npVideo.src = vid; else { npVideo.removeAttribute('src'); npVideo.load(); } }
     $('cover').classList.toggle('has-custom', !!u);
+    $('cover').classList.toggle('has-video', !!vid);
+    vidPlay();
     syncBg();
   }
   S.on('track', syncCustomCover);
+  S.on('tab', vidPlay);
+  document.addEventListener('visibilitychange', vidPlay);
   async function setCover(id, blob) {
     dropCoverUrl(id);
     if (blob) { await idb.set('cover:' + id, blob); covers.add(id); } else { await idb.del('cover:' + id).catch(() => {}); covers.delete(id); }
@@ -811,10 +829,13 @@
   }
   function openCoverSheet() {
     const t = S.cur();
-    const body = openSheet('Своя обложка', '<p class="hint">Картинка или анимированный GIF. Хранится только на этом телефоне.</p><div class="sheet-list">' +
+    const al = albumId(t);
+    const body = openSheet('Своя обложка', '<p class="hint">Картинка, GIF или короткое видео (крутится по кругу без звука, как Canvas). Хранится только на этом телефоне.</p><div class="sheet-list">' +
       (t ? '<button data-cv="track">' + svg(IC.plus) + 'Для «' + esc(t.title) + '»</button>' : '') +
+      (al ? '<button data-cv="album">' + svg(IC.plus) + 'Для альбома «' + esc(t.album) + '»</button>' : '') +
       '<button data-cv="all">' + svg(IC.plus) + 'Для всех треков без обложки</button>' +
       (t && covers.has(t.key) ? '<button data-cv="rm-track">' + svg(IC.close) + 'Убрать у этого трека</button>' : '') +
+      (al && covers.has(al) ? '<button data-cv="rm-album">' + svg(IC.close) + 'Убрать у альбома</button>' : '') +
       (covers.has('*') ? '<button data-cv="rm-all">' + svg(IC.close) + 'Убрать общую обложку</button>' : '') + '</div>');
     body.addEventListener('click', async (e) => {
       const b = e.target.closest('[data-cv]');
@@ -823,9 +844,10 @@
       closeSheet();
       try {
         if (k === 'rm-track') await setCover(t.key, null);
+        else if (k === 'rm-album') await setCover(al, null);
         else if (k === 'rm-all') await setCover('*', null);
-        else { const f = await pickImage(); if (f) { await setCover(k === 'all' ? '*' : t.key, f); S.toast('Обложка сохранена'); } }
-      } catch (_) { S.toast('Не удалось сохранить картинку'); }
+        else { const f = await pickImage(true); if (f) { await setCover(k === 'all' ? '*' : k === 'album' ? al : t.key, f); S.toast('Обложка сохранена'); } }
+      } catch (_) { S.toast('Не удалось сохранить обложку'); }
     });
   }
   // долгое нажатие на обложку в плеере

@@ -287,7 +287,9 @@ html.apk.has-bg .app-bg { display: block; position: fixed; inset: 0; z-index: -1
 html.apk .app-bg img { width: 100%; height: 100%; object-fit: cover; filter: blur(var(--app-bg-blur, 0)); transform: scale(1.06); }
 html.apk .app-bg::after { content: ''; position: absolute; inset: 0; background: rgba(0, 0, 0, var(--app-bg-dim, .55)); }
 html.apk .np-custom { display: none; position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 1; border-radius: inherit; }
-html.apk .cover.has-custom .np-custom { display: block; }
+html.apk .cover.has-custom .np-custom:not(.np-vid) { display: block; }
+html.apk .cover.has-video .np-vid { display: block; }
+html.apk .cover.has-video .np-custom:not(.np-vid) { display: none; }
 html.apk .cover.has-custom .cover-letter { visibility: hidden; }
 html.apk #panel-themes input[type="range"]#bg-dim, html.apk #panel-themes input[type="range"]#bg-blur { width: 100%; }
 html.apk .sheet-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
