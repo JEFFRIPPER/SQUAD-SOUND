@@ -218,7 +218,7 @@
       const lines = L.parse(r.synced);
       if (lines.length) {
         st.lines = lines;
-        box.innerHTML = lines.map((l, i) => '<p data-i="' + i + '" data-t="' + l.t + '">' + (esc(l.text) || '♪') + '</p>').join('');
+        box.innerHTML = lines.map((l, i) => '<p data-i="' + i + '" data-t="' + l.t + '"><span class="lt">' + (esc(l.text) || '♪') + '</span></p>').join('');
       } else box.innerHTML = '<div class="dl-plain">' + esc(r.plain).replace(/\n/g, '<br>') + '</div>';
       if (r.src) box.insertAdjacentHTML('beforeend', '<p class="dl-src">Текст: ' + esc(r.src) + '</p>');
       st.r = r;
@@ -248,7 +248,13 @@
           el.classList.add('on');
           body.scrollTo({ top: el.offsetTop - body.clientHeight / 2 + el.offsetHeight / 2, behavior: st.cur === -1 ? 'auto' : 'smooth' });
         } else if (i < 0) body.scrollTo({ top: 0 });
-        st.cur = i;
+        st.cur = i; st.sw = -1;
+      }
+      // подсветка по словам: заливка бежит по строке, как в караоке
+      const lt = i >= 0 && box.querySelector('p.on .lt');
+      if (lt) {
+        const pct = Math.round(L.sung(st.lines, i, now) * 1000) / 10;
+        if (pct !== st.sw) { st.sw = pct; lt.style.setProperty('--p', pct + '%'); }
       }
     }
     st.raf = requestAnimationFrame(loop);

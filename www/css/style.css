@@ -673,6 +673,11 @@ html.desk .dl-head { padding-top: 40px; } /* под кнопками окна */
 .dl.kara .dl-lines { text-align: center; }
 .dl.kara .dl-lines p[data-t] { font-size: 40px; transform-origin: center; }
 .dl.kara .dl-lines p.on { color: var(--accent); transform: scale(1.08); text-shadow: 0 0 30px color-mix(in srgb, var(--accent) 50%, transparent); }
+/* заливка по словам: пропетое — ярко, остальное строки — приглушённо. Inline-span: градиент идёт по переносам строк */
+.dl-lines p.on { --lc: var(--text); }
+.dl.kara .dl-lines p.on { --lc: var(--accent); }
+.dl-lines p.on .lt { --p: 0%; color: transparent; -webkit-background-clip: text; background-clip: text;
+  background-image: linear-gradient(90deg, var(--lc) var(--p), color-mix(in srgb, var(--lc) 45%, transparent) calc(var(--p) + 4%)); }
 .dl-plain { font-size: 20px; line-height: 1.6; white-space: normal; }
 .dl-hint { color: var(--muted); font-size: 18px; text-align: center; }
 .dl-src { color: var(--muted); font-size: 12px; margin-top: 30px; }
