@@ -1573,6 +1573,9 @@
     ['Обычный', {}],
     ['Nightcore', { speed: 1.25, vinyl: true }],
     ['Slowed + Reverb', { speed: 0.85, vinyl: true, reverbMix: 0.45, reverbSize: 4 }],
+    ['Sped Up', { speed: 1.2, vinyl: true }],
+    ['Phonk Bass', { bass: 9, width: 1.25, reverbMix: 0.12, reverbSize: 1.5 }],
+    ['Daycore', { speed: 0.8, vinyl: true, reverbMix: 0.25, reverbSize: 3 }],
     ['8D', { eightD: true, eightDSpeed: 0.12, reverbMix: 0.2, reverbSize: 2.5 }],
     ['Концерт', { reverbMix: 0.35, reverbSize: 3.5, width: 1.3 }],
     ['Бас-буст', { bass: 9 }],
@@ -1581,13 +1584,23 @@
   ];
   const FX_KEYS = ['speed', 'pitch', 'vinyl', 'reverbMix', 'reverbSize', 'echoMix', 'echoTime', 'echoFeedback',
     'bass', 'width', 'balance', 'eightD', 'eightDSpeed', 'karaoke'];
-  FX_PRESETS.forEach(([name, vals]) => {
+  function applyFxPreset(name) {
+    const p = FX_PRESETS.find((x) => x[0] === name);
+    if (!p) return;
+    FX_KEYS.forEach((k) => engine.set(k, k in p[1] ? p[1][k] : DEFAULT_FX[k]));
+    syncFx(); saveFx();
+  }
+  // какой пресет сейчас включён (все эффекты совпадают), '' — свои настройки
+  function fxPresetName() {
+    const s = engine.state;
+    const same = (a, b) => (typeof a === 'number' && typeof b === 'number' ? Math.abs(a - b) < 1e-3 : a === b);
+    const p = FX_PRESETS.find(([, v]) => FX_KEYS.every((k) => same(s[k], k in v ? v[k] : DEFAULT_FX[k])));
+    return p ? p[0] : '';
+  }
+  FX_PRESETS.forEach(([name]) => {
     const b = document.createElement('button');
     b.className = 'chip'; b.textContent = name;
-    b.onclick = () => {
-      FX_KEYS.forEach((k) => engine.set(k, k in vals ? vals[k] : DEFAULT_FX[k]));
-      syncFx(); saveFx(); toast('Пресет: ' + name);
-    };
+    b.onclick = () => { applyFxPreset(name); toast('Пресет: ' + name); };
     $('fx-presets').appendChild(b);
   });
   $('fx-reset').onclick = () => {
@@ -1618,6 +1631,7 @@
     if (s.bass > 0) fx.push('Бас');
     if (s.karaoke > 0.01) fx.push('Караоке');
     $('q-fx').textContent = fx.join(' · ');
+    emitApp('fx');
   }
 
   // ---------- Таймер сна ----------
@@ -2575,6 +2589,9 @@
       syncEq(); syncFx(); saveFx(); aeqUI();
     },
     setFx(k, v) { engine.set(k, v); syncFx(); saveFx(); },
+    fxPresets: () => FX_PRESETS.map((x) => x[0]),
+    fxPreset: fxPresetName,
+    applyFxPreset,
     pause: () => decks.forEach((d) => d.pause()),
     // включить список ключей с позиции i; shuffle — перемешать
     play(keys, i, shuffle) {

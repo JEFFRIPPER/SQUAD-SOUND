@@ -359,3 +359,11 @@ html.apk #panel-profile .pf-name { text-align: center; }
 html.apk #panel-profile .pf-lv { justify-content: center; }
 html.apk #panel-profile .pf-stats { grid-template-columns: repeat(2, 1fr); }
 html.apk #panel-themes > .set-off { display: none !important; }
+
+/* Ремиксы в плеере: одна строка плашек, листается пальцем вбок без полосы прокрутки */
+html.apk .now .quick { display: none; }
+.np-remix { display: flex; gap: 8px; overflow-x: auto; margin: 0 -24px; padding: 2px 24px; scrollbar-width: none; flex-shrink: 0;
+  mask-image: linear-gradient(90deg, transparent, #000 24px, #000 calc(100% - 24px), transparent); }
+.np-remix::-webkit-scrollbar { display: none; }
+.np-remix .chip { flex-shrink: 0; white-space: nowrap; background: color-mix(in srgb, var(--text) 8%, transparent); border: 0; }
+.np-remix .chip.on { background: var(--accent); color: var(--on-accent, #fff); }

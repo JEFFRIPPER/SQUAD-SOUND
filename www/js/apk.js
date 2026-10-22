@@ -364,6 +364,30 @@
   const like = acts.querySelector('[data-np="like"]');
   like.classList.add('np-like');
 
+  // Ремиксы в одно нажатие: строка плашек под кнопками, включённая подсвечена.
+  // Свои настройки эффектов — отдельная плашка «Свои: …» (то, что раньше показывала строка .quick)
+  const RX = [['Обычный', 'Оригинал'], ['Slowed + Reverb', 'Slowed + Reverb'], ['Sped Up', 'Sped Up'], ['Phonk Bass', 'Phonk Bass'], ['Nightcore', 'Nightcore'], ['Daycore', 'Daycore']];
+  const rx = document.createElement('div');
+  rx.className = 'np-remix';
+  now.querySelector('.quick').after(rx);
+  function syncRemix() {
+    const cur = S.fxPreset ? S.fxPreset() : 'Обычный';
+    const own = ['q-speed', 'q-pitch', 'q-fx'].map((id) => $(id).textContent).filter(Boolean).join(' · ');
+    rx.innerHTML = (!cur ? '<button class="chip on" data-rx="">Свои: ' + esc(own || 'эффекты') + '</button>' : '') +
+      RX.map(([k, l]) => '<button class="chip' + (k === cur ? ' on' : '') + '" data-rx="' + esc(k) + '">' + esc(l) + '</button>').join('');
+    const on = rx.querySelector('.on');
+    if (on) rx.scrollLeft = Math.max(0, on.offsetLeft - (rx.clientWidth - on.offsetWidth) / 2);
+  }
+  rx.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-rx]');
+    if (!b) return;
+    if (!b.dataset.rx) { closePlayer(); setTimeout(() => S.showTab('fx'), 0); return; } // свои — открыть «Эффекты»
+    S.applyFxPreset(b.dataset.rx);
+    if (navigator.vibrate) navigator.vibrate(8);
+  });
+  S.on('fx', syncRemix);
+  syncRemix();
+
   // Плеер не прокручивается: если всё не влезает по высоте, уменьшаем обложку ровно на нехватку
   function fitCover() {
     if (S.settings.tab !== 'player' || !now.clientHeight) return;
@@ -432,7 +456,7 @@
   // свайп вниз по плееру — свернуть
   let sw = null;
   now.addEventListener('touchstart', (e) => {
-    if (e.touches.length !== 1 || e.target.closest('input, .np-acts, .controls') || now.scrollTop > 0) { sw = null; return; }
+    if (e.touches.length !== 1 || e.target.closest('input, .np-acts, .controls, .np-remix') || now.scrollTop > 0) { sw = null; return; }
     sw = { y: e.touches[0].clientY, x: e.touches[0].clientX, dy: 0 };
   }, { passive: true });
   now.addEventListener('touchmove', (e) => {
