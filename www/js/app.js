@@ -1926,8 +1926,8 @@
   const WEB = window.SquadOnline || null;
   // q — запрос, results — найденное (null — показываем добавленные), page/more — подгрузка, busy/error
   const onl = { q: '', results: null, page: 1, more: false, busy: false, error: '', adding: new Set(), webMore: false, tgNext: null };
-  // В APK онлайн-поиск идёт и по всему Telegram (каналы с музыкой), если вход выполнен. В .exe — как раньше.
-  function tgFind() { const tg = window.SquadTG; return !!(apkUI && tg && tg.search && tg.state.phase === 'ready'); }
+  // Онлайн-поиск идёт и по Telegram (свои чаты + открытые музыкальные каналы), если вход выполнен — на ПК и в APK
+  function tgFind() { const tg = window.SquadTG; return !!(tg && tg.search && tg.state.phase === 'ready'); }
 
   function webTrack(d) {
     const t = makeTrack(d.title || 'Трек', {});
@@ -2044,7 +2044,7 @@
     if (onl.busy) tail.innerHTML = '<div class="tg-spin web-spin"></div>';
     else if (onl.error) tail.textContent = onl.error;
     else if (!onl.results.length) tail.textContent = tgFind() ? 'Ничего не нашлось ни в Telegram, ни в открытых источниках. Попробуйте написать иначе: только исполнителя или только название.'
-      : 'Ничего не нашлось. В открытых источниках в основном независимые исполнители, известных релизов из стримингов там нет.' + (apkUI && TG && TG.configured ? ' Войдите в Telegram в медиатеке — тогда поиск пойдёт и по музыкальным каналам.' : '');
+      : 'Ничего не нашлось. В открытых источниках в основном независимые исполнители, известных релизов из стримингов там нет.' + (TG && TG.configured ? ' Войдите в Telegram в медиатеке — тогда поиск пойдёт и по музыкальным каналам.' : '');
     else if (onl.more) tail.innerHTML = '<button class="btn" data-act="web-more">Показать ещё</button>';
     else tail.textContent = 'Это всё, что нашлось';
     frag.appendChild(tail);
