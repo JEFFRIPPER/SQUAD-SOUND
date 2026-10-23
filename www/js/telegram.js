@@ -315,36 +315,143 @@
     : pe.t === 'g' ? new G.Api.InputPeerChat({ chatId: G.bigInt(pe.id) })
     : new G.Api.InputPeerUser({ userId: G.bigInt(pe.id), accessHash: G.bigInt(pe.h) });
 
-  // next — курсор из прошлого ответа ({rate, peer, id}); вернёт {results, next|null}
-  async function search(q, next) {
-    await ensure();
+  // Найденное сообщение → трек для списка результатов (или null, если в нём не музыка)
+  function resOf(m, pe) {
+    if (!(m instanceof G.Api.Message) || !pe) return null;
+    const t = m.media && m.media instanceof G.Api.MessageMediaDocument ? trackOf(m.media.document) : null;
+    if (!t) return null;
+    return Object.assign(t, {
+      key: 'tg:doc:' + t.tg.doc, folder: 'Telegram/Поиск', source: 'Telegram', license: pe.name || 'Telegram',
+      tg: { doc: t.tg.doc, msg: m.id, peer: { t: pe.t, id: pe.id, h: pe.h } },
+    });
+  }
+
+  // Поиск по своим чатам и каналам (messages.searchGlobal). cur — курсор {rate, peer, id}
+  async function globalPage(q, cur) {
     const r = await client.invoke(new G.Api.messages.SearchGlobal({
-      q: String(q || '').slice(0, 120),
-      filter: new G.Api.InputMessagesFilterMusic(),
-      minDate: 0, maxDate: 0,
-      offsetRate: (next && next.rate) || 0,
-      offsetPeer: next && next.peer ? inputPeer(next.peer) : new G.Api.InputPeerEmpty(),
-      offsetId: (next && next.id) || 0,
+      q, filter: new G.Api.InputMessagesFilterMusic(), minDate: 0, maxDate: 0,
+      offsetRate: (cur && cur.rate) || 0,
+      offsetPeer: cur && cur.peer ? inputPeer(cur.peer) : new G.Api.InputPeerEmpty(),
+      offsetId: (cur && cur.id) || 0,
       limit: 40,
     }));
     const msgs = (r && r.messages) || [], chats = (r && r.chats) || [], users = (r && r.users) || [];
-    const results = [], seenDoc = new Set();
+    const results = [];
     let last = null;
     for (const m of msgs) {
-      if (!(m instanceof G.Api.Message)) continue;
-      const pe = peerOf(m, chats, users);
+      const pe = m instanceof G.Api.Message ? peerOf(m, chats, users) : null;
       if (pe) last = { rate: r.nextRate || m.date, peer: pe, id: m.id };
-      const t = m.media && m.media instanceof G.Api.MessageMediaDocument ? trackOf(m.media.document) : null;
-      if (!t || !pe || seenDoc.has(t.tg.doc)) continue; // один и тот же файл часто пересылают по разным каналам
-      seenDoc.add(t.tg.doc);
-      const where = pe.name || 'Telegram';
-      results.push(Object.assign(t, {
-        key: 'tg:doc:' + t.tg.doc, folder: 'Telegram/Поиск', source: 'Telegram', license: where,
-        tg: { doc: t.tg.doc, msg: m.id, peer: { t: pe.t, id: pe.id, h: pe.h } },
-      }));
+      const t = resOf(m, pe);
+      if (t) results.push(t);
     }
     const more = msgs.length >= 40 || (r instanceof G.Api.messages.MessagesSlice && r.count > msgs.length);
     return { results, next: more && last ? last : null };
+  }
+
+  // ---------- Открытые музыкальные каналы: ищем в них без подписки ----------
+  // searchGlobal видит только чаты, где пользователь состоит, поэтому популярное часто «не находилось».
+  // В открытом канале messages.search работает и без подписки. Каналы берём двумя путями:
+  // по самому запросу (канал исполнителя или фанатов) и из списка музыкальных каналов, который копится сам:
+  // ищем их по словам «музыка», «phonk»… (contacts.search), а те, где уже что-то нашлось, поднимаем выше.
+  const SRC_WORDS = ['музыка', 'music', 'mp3', 'новинки музыки', 'phonk', 'треки', 'рэп', 'remix'];
+  const SRC_TTL = 3 * 864e5, SRC_MAX = 40, CH_LIMIT = 20;
+  const chanOf = (c) => (c instanceof G.Api.Channel && c.broadcast && !c.min && c.username && c.accessHash != null)
+    ? { t: 'c', id: c.id.toString(), h: c.accessHash.toString(), name: c.title || '', n: Number(c.participantsCount || 0) } : null;
+  async function findChannels(q, limit) {
+    const r = await client.invoke(new G.Api.contacts.Search({ q: String(q).slice(0, 64), limit }));
+    return ((r && r.chats) || []).map(chanOf).filter(Boolean);
+  }
+  const srcSort = (a, b) => ((b.hits || 0) - (a.hits || 0)) || ((b.n || 0) - (a.n || 0));
+  function srcMerge(add, hits) {
+    const m = new Map(ls.get('srcCh', []).map((c) => [c.id, c]));
+    for (const c of add) {
+      const o = m.get(c.id);
+      m.set(c.id, Object.assign(o || { hits: 0 }, { t: 'c', id: c.id, h: c.h, name: c.name, n: c.n || (o && o.n) || 0 }));
+    }
+    for (const [id, k] of hits || []) { const o = m.get(id); if (o) o.hits = k <= -3 ? -3 : Math.max(-2, (o.hits || 0) + k); } // промахи не выкидывают канал, выкидывает только ошибка доступа
+    const list = [...m.values()].filter((c) => c.hits > -3).sort(srcSort).slice(0, SRC_MAX);
+    ls.set('srcCh', list);
+    return list;
+  }
+  let srcRun = null;
+  function sources() {
+    const list = ls.get('srcCh', []), age = Date.now() - ls.get('srcChAt', 0);
+    // мало каналов — обновляем чаще, но не чаще раза в 10 минут: contacts.search Telegram ограничивает
+    if ((list.length >= 6 && age < SRC_TTL) || age < 6e5) return Promise.resolve(list);
+    if (!srcRun) {
+      srcRun = Promise.all(SRC_WORDS.map((w) => findChannels(w, 10).catch(() => [])))
+        .then((r) => { ls.set('srcChAt', Date.now()); return srcMerge(r.flat()); })
+        .finally(() => { srcRun = null; });
+    }
+    return srcRun;
+  }
+  // Какие каналы спросить: найденные по запросу, лучшие из списка и пара случайных — чтобы список не застаивался
+  function pickChannels(byQ, src) {
+    const out = [], seen = new Set();
+    const put = (c) => { if (c && !seen.has(c.id)) { seen.add(c.id); out.push({ t: 'c', id: c.id, h: c.h, name: c.name }); } };
+    byQ.slice().sort(srcSort).slice(0, 3).forEach(put);
+    const ranked = src.slice().sort(srcSort);
+    ranked.slice(0, 4).forEach(put);
+    const rest = ranked.slice(4);
+    for (let i = 0; i < 2 && rest.length; i++) put(rest.splice(Math.floor(Math.random() * rest.length), 1)[0]);
+    return out;
+  }
+  async function channelPage(pe, q, offsetId) {
+    const r = await client.invoke(new G.Api.messages.Search({
+      peer: inputPeer(pe), q, filter: new G.Api.InputMessagesFilterMusic(),
+      minDate: 0, maxDate: 0, offsetId: offsetId || 0, addOffset: 0, limit: CH_LIMIT, maxId: 0, minId: 0, hash: G.bigInt(0),
+    }));
+    const msgs = ((r && r.messages) || []).filter((m) => m instanceof G.Api.Message);
+    return { results: msgs.map((m) => resOf(m, pe)).filter(Boolean), next: msgs.length >= CH_LIMIT ? msgs[msgs.length - 1].id : 0 };
+  }
+  // по 4 запроса одновременно: так быстрее, а Telegram не ругается на частоту
+  async function pool(items, n, fn) {
+    const out = new Array(items.length);
+    let i = 0;
+    await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => { while (i < items.length) { const k = i++; out[k] = await fn(items[k]); } }));
+    return out;
+  }
+  // сначала то, где в названии и исполнителе есть все слова запроса
+  const words = (s) => String(s || '').toLowerCase().replace(/ё/g, 'е').split(/[^0-9a-zа-я]+/i).filter((w) => w.length > 1);
+  function rank(list, q) {
+    const qw = words(q);
+    if (!qw.length) return list;
+    const score = (t) => { const hay = words(t.artist + ' ' + t.title + ' ' + t.name).join(' '); return qw.filter((w) => hay.includes(w)).length; };
+    return list.map((t, i) => ({ t, i, s: score(t) })).sort((a, b) => (b.s - a.s) || (a.i - b.i)).map((x) => x.t);
+  }
+
+  // Поиск музыки: свои чаты + открытые каналы, параллельно. next — курсор из прошлого ответа; вернёт {results, next|null}
+  async function search(q, next) {
+    await ensure();
+    q = String(q || '').replace(/[«»"“”()[\]{}|_~*#]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+    if (!q) return { results: [], next: null };
+    const first = !next;
+    let chans, byQ = [];
+    const gJob = first || next.g ? globalPage(q, first ? null : next.g).catch((e) => ({ err: e })) : null;
+    if (first) {
+      let src;
+      [byQ, src] = await Promise.all([findChannels(q, 10).catch(() => []), sources().catch(() => [])]);
+      chans = pickChannels(byQ, src).map((pe) => ({ pe, off: 0 }));
+    } else chans = next.ch || [];
+    const cRes = await pool(chans, 4, (c) => channelPage(c.pe, q, c.off).catch((e) => ({ err: e })));
+    const g = gJob ? await gJob : null;
+    if (g && g.err && cRes.every((r) => r.err)) throw g.err; // всё упало — пусть покажут ошибку
+    const results = [], seenDoc = new Set();
+    const take = (list) => list.forEach((t) => { if (!seenDoc.has(t.tg.doc)) { seenDoc.add(t.tg.doc); results.push(t); } }); // один файл часто пересылают по разным каналам
+    if (g && !g.err) take(g.results);
+    // каналы, где нашлось, поднимаем в списке; найденные по запросу и давшие треки — запоминаем как новые источники
+    const nextCh = [], hits = [], good = new Set();
+    cRes.forEach((r, i) => {
+      const pe = chans[i].pe;
+      if (r.err) { if (/CHANNEL_PRIVATE|CHANNEL_INVALID|USERNAME/.test(r.err.errorMessage || r.err.message || '')) hits.push([pe.id, -3]); return; }
+      take(r.results);
+      if (r.results.length) good.add(pe.id);
+      if (first) hits.push([pe.id, r.results.length ? 1 : -1]);
+      if (r.next) nextCh.push({ pe, off: r.next });
+    });
+    if (hits.length) srcMerge(byQ.filter((c) => good.has(c.id)), hits);
+    const gNext = g && !g.err ? g.next : null;
+    return { results: rank(results, q), next: gNext || nextCh.length ? { g: gNext, ch: nextCh } : null };
   }
 
   // Документ из сообщения канала/чата (свежий file_reference)
