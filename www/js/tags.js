@@ -67,6 +67,12 @@
     return out.subarray(0, j);
   }
 
+  // ReplayGain → громкость трека в LUFS (ReplayGain 2.0 считает от -18 LUFS). «-6.20 dB» → -11.8
+  function rgLufs(v) {
+    const g = parseFloat(String(v).replace(',', '.'));
+    return isFinite(g) && Math.abs(g) < 60 ? Math.round((-18 - g) * 10) / 10 : null;
+  }
+
   function parseId3v2(b, res) {
     const ver = b[3];
     const flags = b[5];
@@ -108,6 +114,13 @@
         else if (key === 'TRCK') res.no = res.no || parseInt(v, 10) || 0;
         else if (key === 'TPOS') res.disc = res.disc || parseInt(v, 10) || 0;
         else if (key === 'TYER' || key === 'TDRC') res.year = res.year || parseInt(v, 10) || 0;
+      } else if (key === 'TXXX' && data.length > 2) {
+        const enc = data[0], e = strEnd(data, 1, enc);
+        const desc = decodeText(enc, data.subarray(1, e)).replace(/\0+$/, '').trim().toUpperCase();
+        if (desc === 'REPLAYGAIN_TRACK_GAIN' && res.lufs == null) {
+          const l = rgLufs(decodeText(enc, data.subarray(e + strStep(enc))).replace(/\0+$/, ''));
+          if (l != null) res.lufs = l;
+        }
       } else if (key === 'USLT' && !res.lyrics && data.length > 5) {
         // текст песни: кодировка, язык (3), описание, текст
         const enc = data[0];
@@ -173,6 +186,9 @@
       else if (k === 'TRACKNUMBER') res.no = res.no || parseInt(v, 10) || 0;
       else if (k === 'DISCNUMBER') res.disc = res.disc || parseInt(v, 10) || 0;
       else if (k === 'DATE' || k === 'YEAR') res.year = res.year || parseInt(v, 10) || 0;
+      else if (k === 'REPLAYGAIN_TRACK_GAIN' && res.lufs == null) { const l = rgLufs(v); if (l != null) res.lufs = l; }
+      // Opus: R128_TRACK_GAIN — число Q7.8 до -23 LUFS
+      else if (k === 'R128_TRACK_GAIN' && /^-?\d+$/.test(v)) res.lufs = Math.round((-23 - parseInt(v, 10) / 256) * 10) / 10;
       else if (k === 'LYRICS' || k === 'UNSYNCEDLYRICS' || k === 'SYNCEDLYRICS') {
         if (/\[\d+:\d+/.test(v)) res.syncedLyrics = res.syncedLyrics || v; else res.lyrics = res.lyrics || v;
       }

@@ -31,8 +31,18 @@
     for (const line of String(s || '').split(/\r?\n/)) {
       const tags = [...line.matchAll(/\[(\d+):(\d+(?:[.:]\d+)?)\]/g)];
       if (!tags.length) continue;
-      const text = line.replace(/\[[^\]]*\]/g, '').trim();
-      for (const m of tags) out.push({ t: +m[1] * 60 + parseFloat(m[2].replace(':', '.')), text });
+      // расширенный LRC: <мм:сс.xx> перед словами — точное время каждого слова
+      const body = line.replace(/\[[^\]]*\]/g, '');
+      const wt = [...body.matchAll(/<(\d+):(\d+(?:[.:]\d+)?)>([^<]*)/g)];
+      const text = body.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+      let words = null;
+      if (wt.length >= 2) {
+        let at = 0;
+        words = wt.map((m) => { const w = { t: +m[1] * 60 + parseFloat(m[2].replace(':', '.')), from: at }; at += m[3].replace(/\s+/g, ' ').length; return w; });
+        const lead = body.replace(/<[^>]*>/g, '').length - body.replace(/<[^>]*>/g, '').trimStart().length; // пробелы в начале строки
+        words.forEach((w) => { w.from = Math.max(0, w.from - lead); });
+      }
+      for (const m of tags) out.push(words ? { t: +m[1] * 60 + parseFloat(m[2].replace(':', '.')), text, words } : { t: +m[1] * 60 + parseFloat(m[2].replace(':', '.')), text });
     }
     return out.sort((a, b) => a.t - b.t);
   }
@@ -180,7 +190,28 @@
     return res;
   }
 
+  // Сколько строки i уже «спето» (0..1) в момент now: по словам из расширенного LRC, иначе равномерно
+  // по буквам до следующей строки (длинный проигрыш после строки не растягивает подсветку)
+  function sung(lines, i, now) {
+    const l = lines[i];
+    if (!l) return 0;
+    const len = Math.max(1, l.text.length);
+    const next = lines[i + 1] ? lines[i + 1].t : l.t + 6;
+    if (l.words) {
+      let k = -1;
+      for (let j = 0; j < l.words.length && l.words[j].t <= now; j++) k = j;
+      if (k < 0) return 0;
+      const w = l.words[k], nw = l.words[k + 1];
+      const end = nw ? nw.t : Math.min(next, w.t + 1.5);
+      const to = nw ? nw.from : len;
+      return Math.min(1, (w.from + (to - w.from) * Math.min(1, (now - w.t) / Math.max(0.05, end - w.t))) / len);
+    }
+    const dur = Math.max(0.6, Math.min(next - l.t - 0.15, len * 0.11 + 0.8));
+    return Math.max(0, Math.min(1, (now - l.t) / dur));
+  }
+
   window.SquadLyrics = {
+    sung,
     extra,
     get: fetchLyrics,
     parse: parseLrc,

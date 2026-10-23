@@ -1,7 +1,7 @@
 /* SQUAD SOUND — аудиодвижок на Web Audio API.
  *
  * Цепочка:
- * <audio A|B> → (кроссфейд) → pitch (AudioWorklet) → preamp → EQ x10 → bass → width(M/S)
+ * <audio A|B> → (кроссфейд) → pitch (AudioWorklet) → preamp → AutoEQ (наушники) → EQ x10 → bass → width(M/S)
  *        → [dry | reverb | echo] → pan (+8D LFO) → limiter → trim → master → analyser → out
  * Пока эквалайзер плоский и эффекты выключены, звук идёт с дек прямо на громкость (master) — бит в бит.
  */
@@ -9,6 +9,8 @@
   'use strict';
 
   const EQ_FREQS = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+  const AEQ_MAX = 10;
+  const AEQ_TYPE = { LSC: 'lowshelf', LS: 'lowshelf', HSC: 'highshelf', HS: 'highshelf', PK: 'peaking' };
 
   // Гранулярный pitch-shifter: две «читающие головки» по кольцевому буферу
   // с окнами Ханна (sin²): их сумма всегда 1 — громкость не «качается». Скорость не меняет, только тон.
@@ -107,6 +109,7 @@ registerProcessor('squad-pitch', SquadPitch);
         eightD: false, eightDSpeed: 0.15,
         limiter: true, volume: 0.9,
         karaoke: 0, // 0..1: убрать голос (то, что посередине стерео), бас остаётся
+        aeq: null, // AutoEQ под наушники: { name, pre, f: [[тип LSC|PK|HSC, Гц, дБ, Q], …] }
       };
     }
 
@@ -125,18 +128,22 @@ registerProcessor('squad-pitch', SquadPitch);
 
 
       n.input = ctx.createGain();
-      // На каждой деке: кроссфейд (deckGain) → выравнивание громкости трека (deckNorm). deckAn слушает трек
-      // до всей обработки — по нему меряем громкость самой записи.
-      n.deckNorm = []; n.deckAn = [];
+      // На каждой деке: кроссфейд (deckGain) → выравнивание громкости трека (deckNorm).
+      // Измеритель громкости (LUFS по ITU BS.1770): K-фильтр (полка +4 дБ от 1,7 кГц и срез ниже 38 Гц) →
+      // левый и правый каналы отдельно. Подключается только пока включено выравнивание (setMeter).
+      n.deckNorm = []; n.deckMeter = []; n.deckSrc = [];
       n.deckGain = this.decks.map((el, i) => {
         const g = ctx.createGain();
         g.gain.value = i === this.active ? 1 : 0;
-        const norm = ctx.createGain(), an = ctx.createAnalyser();
-        an.fftSize = 2048;
+        const norm = ctx.createGain();
         const src = ctx.createMediaElementSource(el);
         src.connect(g).connect(norm).connect(n.input);
-        src.connect(an);
-        n.deckNorm.push(norm); n.deckAn.push(an);
+        const shelf = ctx.createBiquadFilter(); shelf.type = 'highshelf'; shelf.frequency.value = 1682; shelf.gain.value = 4;
+        const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 38; hp.Q.value = 0.5;
+        const split = ctx.createChannelSplitter(2);
+        const an = [0, 1].map((c) => { const a = ctx.createAnalyser(); a.fftSize = 16384; split.connect(a, c); return a; });
+        shelf.connect(hp).connect(split);
+        n.deckNorm.push(norm); n.deckSrc.push(src); n.deckMeter.push({ shelf, an, on: false });
         return g;
       });
 
@@ -153,6 +160,9 @@ registerProcessor('squad-pitch', SquadPitch);
       }
 
       n.preamp = ctx.createGain();
+      // AutoEQ: коррекция АЧХ наушников (до 10 фильтров из профиля), без профиля фильтры плоские
+      n.aeqPre = ctx.createGain();
+      n.aeq = Array.from({ length: AEQ_MAX }, () => { const b = ctx.createBiquadFilter(); b.type = 'peaking'; b.gain.value = 0; return b; });
       n.eq = EQ_FREQS.map((f, i) => {
         const b = ctx.createBiquadFilter();
         b.type = i === 0 ? 'lowshelf' : i === EQ_FREQS.length - 1 ? 'highshelf' : 'peaking';
@@ -217,7 +227,7 @@ registerProcessor('squad-pitch', SquadPitch);
       n.mode = null;
       if (n.pitch) n.pitch.connect(n.preamp);
       let prev = n.preamp;
-      for (const b of n.eq) { prev.connect(b); prev = b; }
+      for (const b of [n.aeqPre, ...n.aeq, ...n.eq]) { prev.connect(b); prev = b; }
       prev.connect(n.bass);
       n.bass.connect(n.split);
 
@@ -262,16 +272,31 @@ registerProcessor('squad-pitch', SquadPitch);
       if (seconds) p.setTargetAtTime(gain, t, seconds / 3); else p.setValueAtTime(gain, t);
     }
 
-    // Средний квадрат сигнала деки i за последние ~40 мс (громкость самой записи), -1 — нет Web Audio
+    // Включить/выключить измеритель громкости на деках (лишние фильтры в звуковом потоке не держим)
+    setMeter(on) {
+      const n = this.nodes;
+      if (!n) return;
+      n.deckMeter.forEach((m, i) => {
+        if (!!on === m.on) return;
+        m.on = !!on;
+        if (on) n.deckSrc[i].connect(m.shelf); else try { n.deckSrc[i].disconnect(m.shelf); } catch (_) {}
+      });
+    }
+
+    // Громкость деки i за последние ~0,35 с в LUFS (K-взвешенно, каналы суммируются); null — нет данных
     level(i) {
       const n = this.nodes;
-      if (!n || !n.deckAn[i]) return -1;
-      const an = n.deckAn[i];
-      const b = this._lv || (this._lv = new Float32Array(an.fftSize));
-      an.getFloatTimeDomainData(b);
+      const m = n && n.deckMeter[i];
+      if (!m || !m.on) return null;
+      const b = this._lv || (this._lv = new Float32Array(m.an[0].fftSize));
       let sum = 0;
-      for (let k = 0; k < b.length; k++) sum += b[k] * b[k];
-      return sum / b.length;
+      for (const an of m.an) {
+        an.getFloatTimeDomainData(b);
+        let s = 0;
+        for (let k = 0; k < b.length; k++) s += b[k] * b[k];
+        sum += s / b.length;
+      }
+      return sum > 0 ? -0.691 + 10 * Math.log10(sum) : -Infinity;
     }
 
     get audio() { return this.decks[this.active]; }
@@ -315,7 +340,7 @@ registerProcessor('squad-pitch', SquadPitch);
     _neutral() {
       const s = this.state;
       const eqFlat = !s.eqOn || (!s.preamp && s.eq.every((v) => !v));
-      return eqFlat && !s.bass && s.width === 1 && !s.karaoke && !s.balance && !s.reverbMix && !s.echoMix && !s.eightD && !s.pitch;
+      return eqFlat && !s.aeq && !s.bass && s.width === 1 && !s.karaoke && !s.balance && !s.reverbMix && !s.echoMix && !s.eightD && !s.pitch;
     }
 
     // Куда идёт звук с дек:
@@ -390,7 +415,7 @@ registerProcessor('squad-pitch', SquadPitch);
     }
 
     applyAll() {
-      ['speed', 'eq', 'bass', 'width', 'balance', 'reverb', 'echo', 'eightD', 'limiter', 'volume']
+      ['speed', 'eq', 'aeq', 'bass', 'width', 'balance', 'reverb', 'echo', 'eightD', 'limiter', 'volume']
         .forEach((k) => this.apply(k));
     }
 
@@ -442,6 +467,21 @@ registerProcessor('squad-pitch', SquadPitch);
           if (k && !n.kOn) { n.bass.connect(n.kLow); n.kOn = true; }
           smooth(n.kGain.gain, k);
           if (!k && n.kOn) { clearTimeout(n.kT); n.kT = setTimeout(() => { if (!this.state.karaoke && n.kOn) { try { n.bass.disconnect(n.kLow); } catch (_) {} n.kOn = false; } }, 400); }
+          break;
+        }
+        case 'aeq': {
+          if (!n) break;
+          const a = s.aeq && Array.isArray(s.aeq.f) ? s.aeq : null;
+          n.aeqPre.gain.setTargetAtTime(Math.pow(10, (a ? Math.min(0, +a.pre || 0) : 0) / 20), t, 0.03);
+          n.aeq.forEach((b, i) => {
+            const f = a && a.f[i];
+            const type = f && AEQ_TYPE[f[0]];
+            if (!type) { smooth(b.gain, 0); return; }
+            b.type = type;
+            b.frequency.value = Math.max(10, Math.min(20000, +f[1] || 1000));
+            b.Q.value = Math.max(0.1, Math.min(20, +f[3] || 0.7));
+            smooth(b.gain, Math.max(-20, Math.min(20, +f[2] || 0)));
+          });
           break;
         }
         case 'balance':

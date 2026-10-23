@@ -32,7 +32,7 @@
   };
 
   // Кэш тегов и миниатюр обложек (IndexedDB), чтобы не перечитывать файлы
-  const META_VER = 1;
+  const META_VER = 2; // 2: громкость из тегов ReplayGain (lufs)
   const metaDb = (() => {
     let dbp = null;
     const open = () => dbp || (dbp = new Promise((res, rej) => {
@@ -107,11 +107,25 @@
   const tracksWord = (n) => plural(n, 'трек', 'трека', 'треков');
 
   // ---------- Треки ----------
+  // «Исполнитель - Название» из имени файла. Тире считаем разделителем, только если рядом есть пробел
+  // (Jay-Z, Wu-Tang не режем). «KXRAIN- MELXMVNE- KXTSU - HERCULES» → «KXRAIN, MELXMVNE, KXTSU» / «HERCULES»
+  const JUNK = /\s*[([](?:official\s*)?(?:music\s*)?(?:audio|video|lyrics?|lyric\s*video|visuali[sz]er|клип|премьера[^)\]]*)[)\]]\s*/gi;
+  function splitName(base) {
+    base = base.replace(JUNK, ' ').replace(/\s{2,}/g, ' ').trim();
+    const both = base.split(/\s+[-–—]\s+/);
+    if (both.length >= 2) {
+      const title = both.pop().trim();
+      return { artist: both.join(', ').split(/\s*[-–—]\s+|\s+[-–—]\s*/).map((x) => x.trim()).filter(Boolean).join(', '), title };
+    }
+    const one = base.split(/\s*[-–—]\s+|\s+[-–—]\s*/).map((x) => x.trim()).filter(Boolean);
+    if (one.length >= 2) { const title = one.pop(); return { artist: one.join(', '), title }; }
+    return null;
+  }
   function parseName(name) {
-    const base = name.replace(/\.[^.]+$/, '').replace(/_/g, ' ').replace(/^\d+[\s.\-_]+/, '').trim();
-    const m = base.split(/\s+[-–—]\s+/);
-    if (m.length >= 2) return { artist: m[0].trim(), title: m.slice(1).join(' - ').trim() };
-    return { artist: 'Неизвестный исполнитель', title: base || name };
+    const base = name.replace(/\.[^.]+$/, '').replace(/_/g, ' ').replace(/^\d+[\s.\-_]+(?=\S)/, '').trim();
+    const p = splitName(base);
+    if (p && p.artist && p.title) return p;
+    return { artist: 'Неизвестный исполнитель', title: base.replace(JUNK, ' ').trim() || name };
   }
 
   function hueOf(str) {
@@ -267,11 +281,12 @@
   }
 
   function applyMeta(t, m) {
-    for (const k of ['title', 'artist', 'album', 'albumArtist', 'genre', 'year', 'no', 'disc', 'thumb', 'accent', 'accent2']) {
+    for (const k of ['title', 'artist', 'album', 'albumArtist', 'genre', 'year', 'no', 'disc', 'thumb', 'accent', 'accent2', 'lufs']) {
       if (m[k]) t[k] = m[k];
     }
     t.metaDone = true;
     if (t === curTrack()) showMeta();
+    if (m.lufs != null && settings.normalize && decks.some((d) => d.dataset.key === t.key)) try { normAll(1); } catch (_) {}
   }
 
   // Обложка с Android (MediaStore) → байты JPEG
@@ -287,6 +302,8 @@
   // теги файла, поверх — правки пользователя (название, исполнитель, обложка из интернета)
   async function loadMeta(t) {
     await loadTags(t);
+    const bk = await metaDb.get('bk:' + t.key);
+    if (bk) { t.bpm = bk.bpm > 0 ? bk.bpm : -1; t.tone = bk.key || ''; t.peaks = bk.peaks || null; }
     const ed = await metaDb.get('edit:' + t.key);
     if (ed) { t.netArt = !!ed.art; applyMeta(t, ed); }
   }
@@ -305,7 +322,7 @@
       if (!src && t.tg) { t.metaDone = true; return; } // теги прочитаем после скачивания
       if (src) {
         const tags = await SquadTags.read(src);
-        for (const k of ['title', 'artist', 'album', 'albumArtist', 'genre', 'year', 'no', 'disc']) if (tags[k]) m[k] = tags[k];
+        for (const k of ['title', 'artist', 'album', 'albumArtist', 'genre', 'year', 'no', 'disc', 'lufs']) if (tags[k]) m[k] = tags[k];
         const ci = await SquadTags.coverInfo(tags.picture);
         if (ci) Object.assign(m, ci);
       }
@@ -387,7 +404,16 @@
     album: ['По альбому', (a, b) => cmp(a.album, b.album) || (a.disc - b.disc) || (a.no - b.no) || cmp(a.title, b.title)],
     year: ['По году', (a, b) => (b.year - a.year) || cmp(a.album, b.album) || (a.no - b.no)],
     name: ['По имени файла', (a, b) => cmp(a.name, b.name)],
+    bpm: ['По темпу (BPM)', (a, b) => bpmOrd(a) - bpmOrd(b) || cmp(a.title, b.title)],
+    tone: ['По тональности', (a, b) => toneOrd(a) - toneOrd(b) || bpmOrd(a) - bpmOrd(b) || cmp(a.title, b.title)],
   };
+  // по кругу Камелота: соседние тональности сводятся без фальши (1A, 1B, 2A, …)
+  function toneOrd(t) {
+    const c = t.tone && window.SquadAnalyze ? window.SquadAnalyze.camelot(t.tone) : '';
+    return c ? parseInt(c, 10) * 2 + (c.endsWith('B') ? 1 : 0) : 999;
+  }
+  const bpmOrd = (t) => (t.bpm > 0 ? t.bpm : 999); // -1 — не разобрался, 0 — ещё не разбирали
+  const bkText = (t) => (t.bpm > 0 ? ' · ' + t.bpm + ' BPM' : '') + (t.tone ? ' · ' + t.tone : '');
   const inGroupSort = { artists: SORTS.album[1], albums: SORTS.album[1], genres: SORTS.artist[1], folders: SORTS.name[1] };
 
   const matches = (t, q) => !q || (t.title + ' ' + t.artist + ' ' + t.album + ' ' + t.name).toLowerCase().includes(q);
@@ -568,7 +594,7 @@
       rows[idx] = '<li class="track' + (playing ? ' playing' : '') + (tab === 'queue' && it.pos < qpos ? ' done' : '') + '" data-idx="' + idx + '">' +
         artHtml(t, esc((t.title[0] || '?').toUpperCase())) +
         '<div class="t-info"><div class="t-title">' + esc(t.title) + '</div><div class="t-artist">' +
-        esc(t.artist + (t.album && tab !== 'albums' ? ' · ' + t.album : '')) + '</div></div>' + tail;
+        esc(t.artist + (t.album && tab !== 'albums' ? ' · ' + t.album : '') + (settings.sort === 'bpm' || settings.sort === 'tone' ? bkText(t) : '')) + '</div></div>' + tail;
     });
     // первый экран — сразу, остальное следующим кадром, чтобы переключение вкладок не подвисало.
     // Перерисовка того же списка (смена трека) — целиком сразу: иначе список на миг короче и прокрутку кидает наверх
@@ -865,6 +891,8 @@
 
   // ---------- Воспроизведение (две деки: кроссфейд и без пауз) ----------
   const deckUrls = [null, null];
+  let early = null;      // {deck} — следующий трек запланирован к старту до конца текущего
+  let earlyLat = 0.02;   // сколько play() у готовой деки идёт до реального звука (подстраивается по замерам)
   let pre = null;       // {pos, key} — что заранее загружено в свободную деку
   let fading = false;
   let fadeUntil = 0;
@@ -888,30 +916,45 @@
   }
 
   // ---------- Одинаковая громкость треков ----------
-  // Меряем громкость самой записи (до эквалайзера и эффектов) за время игры и запоминаем по треку.
+  // Громкость трека в LUFS (как у стримингов): из тега ReplayGain, иначе меряем саму запись (до эквалайзера
+  // и эффектов) во время игры и запоминаем. Тихие места отсеиваем «воротами» BS.1770 (-70 LUFS и -10 LU от среднего).
   // Трек, который ещё не мерили, начинает со средней громкости уже измеренных и подстраивается за первые секунды.
-  const NORM_TARGET = -14; // дБ RMS, к ним подтягиваем
+  const NORM_TARGET = -14; // LUFS, как у Spotify и YouTube; только убавляем
   let loud = {};
-  try { loud = JSON.parse(localStorage.getItem('squad.loud') || '{}') || {}; } catch (_) {}
-  const meas = decks.map(() => ({ key: '', sum: 0, n: 0 }));
+  try { loud = JSON.parse(localStorage.getItem('squad.lufs') || '{}') || {}; localStorage.removeItem('squad.loud'); } catch (_) {}
+  const meas = decks.map(() => ({ key: '', e: [] }));
   let loudSaveT = 0;
   function saveLoud() {
     clearTimeout(loudSaveT);
     loudSaveT = setTimeout(() => {
       const ks = Object.keys(loud);
       for (let i = 0; i < ks.length - 5000; i++) delete loud[ks[i]]; // старые замеры вытесняются
-      try { localStorage.setItem('squad.loud', JSON.stringify(loud)); } catch (_) {}
+      try { localStorage.setItem('squad.lufs', JSON.stringify(loud)); } catch (_) {}
     }, 2000);
   }
   function loudAvg() {
     const v = Object.values(loud);
     return v.length >= 3 ? v.reduce((a, b) => a + b, 0) / v.length : null;
   }
+  // интегральная громкость по блокам (энергии) с двумя воротами
+  function gated(e) {
+    const abs = e.filter((x) => x > 1e-7); // -70 LUFS
+    if (!abs.length) return null;
+    const rel = abs.reduce((a, b) => a + b, 0) / abs.length / 10; // -10 LU
+    const g = abs.filter((x) => x > rel);
+    return -0.691 + 10 * Math.log10(g.reduce((a, b) => a + b, 0) / g.length);
+  }
+  function trackLufs(key, i) {
+    const t = byKey.get(key);
+    if (t && t.lufs != null && isFinite(t.lufs)) return t.lufs;
+    if (loud[key] != null) return loud[key];
+    const m = meas[i];
+    return m.key === key && m.e.length >= 20 ? gated(m.e) : loudAvg();
+  }
   function normGain(i) {
     const key = decks[i].dataset.key;
     if (!settings.normalize || !key) return 1;
-    const m = meas[i];
-    const db = loud[key] != null ? loud[key] : m.key === key && m.n >= 20 ? 10 * Math.log10(m.sum / m.n) : loudAvg();
+    const db = trackLufs(key, i);
     if (db == null || !isFinite(db)) return 1;
     // только убавляем: подъём громкости упирал пики в лимитер, и звук «резало»
     const g = Math.max(-12, Math.min(0, NORM_TARGET - db));
@@ -920,26 +963,76 @@
   // на деку пришёл другой трек: замер прежнего (если набралось ~10 с звука) запоминаем, счётчик — с нуля
   function flushMeas(i) {
     const m = meas[i];
-    if (m.key && m.n >= 50 && loud[m.key] == null) { loud[m.key] = Math.round(10 * Math.log10(m.sum / m.n) * 10) / 10; saveLoud(); }
-    m.key = ''; m.sum = 0; m.n = 0;
+    if (m.key && m.e.length >= 50 && loud[m.key] == null) { const l = gated(m.e); if (l != null) { loud[m.key] = Math.round(l * 10) / 10; saveLoud(); } }
+    m.key = ''; m.e = [];
   }
   const normDeck = (i, sec) => engine.setNorm(i, normGain(i), sec);
   function normAll(sec) { decks.forEach((_, i) => normDeck(i, sec)); }
   setInterval(() => {
-    if (!settings.normalize || !engine.nodes) return;
+    if (!engine.nodes) return;
+    engine.setMeter(!!settings.normalize);
+    if (!settings.normalize) return;
     decks.forEach((d, i) => {
       const key = d.dataset.key;
       const m = meas[i];
-      if (d.paused && m.n >= 50) flushMeas(i); // трек остановился или ушёл в соседнюю деку — замер готов
-      if (!key || d.paused || loud[key] != null) return;
+      if (d.paused && m.e.length >= 50) flushMeas(i); // трек остановился или ушёл в соседнюю деку — замер готов
+      const t = key && byKey.get(key);
+      if (!key || d.paused || loud[key] != null || (t && t.lufs != null)) return;
       if (m.key !== key) { flushMeas(i); m.key = key; }
       const v = engine.level(i);
-      if (!(v > 1e-5)) return; // тишину (-50 дБ и ниже) не считаем
-      m.sum += v; m.n++;
-      if (m.n === 20 || m.n % 50 === 0) normDeck(i, 3); // первые ~4 с, потом уточняем каждые ~10 с
-      if (m.n >= 300) { loud[key] = Math.round(10 * Math.log10(m.sum / m.n) * 10) / 10; saveLoud(); } // ~минута — хватит
+      if (v == null || !isFinite(v)) return;
+      m.e.push(Math.pow(10, (v + 0.691) / 10));
+      const n = m.e.length;
+      if (n === 20 || n % 50 === 0) normDeck(i, 3); // первые ~4 с, потом уточняем каждые ~10 с
+      if (n >= 300) { const l = gated(m.e); if (l != null) { loud[key] = Math.round(l * 10) / 10; saveLoud(); } } // ~минута — хватит
     });
   }, 200);
+
+  // ---------- Темп и тональность ----------
+  // Текущий трек разбираем через ~4 с игры (файл уже в памяти деки). На ПК в простое — остальную медиатеку
+  // по одному треку. На телефоне только играющий трек, и не больше 40 МБ: декодирование занимает память.
+  const bkBusy = new Set();
+  async function analyzeTrack(t, buf) {
+    if (!t || t.bpm || bkBusy.has(t.key) || !window.SquadAnalyze) return;
+    bkBusy.add(t.key);
+    try {
+      const r = await window.SquadAnalyze.run(buf);
+      t.bpm = r.bpm > 0 ? r.bpm : -1; t.tone = r.key || ''; t.peaks = r.peaks || null;
+      metaDb.put('bk:' + t.key, { bpm: r.bpm || 0, key: t.tone, peaks: t.peaks });
+      if (t === curTrack()) drawWave(true);
+      if (t === curTrack()) showMeta();
+      if (settings.sort === 'bpm' || settings.sort === 'tone') scheduleRender();
+    } catch (e) {
+      metaDb.put('bk:' + t.key, { bpm: 0, key: '', err: 1 }); // битый или очень короткий — второй раз не мучаем
+      t.bpm = -1;
+    } finally { bkBusy.delete(t.key); }
+  }
+  setInterval(async () => {
+    const t = curTrack(), a = A();
+    if (!t || t.bpm || a.paused || a.currentTime < 4 || !a.src || a.dataset.key !== t.key || bkBusy.size) return;
+    try {
+      const r = await fetch(a.src);
+      const b = await r.blob();
+      if (isAndroid && b.size > 40 * 1024 * 1024) { t.bpm = -1; return; }
+      analyzeTrack(t, await b.arrayBuffer());
+    } catch (_) {}
+  }, 2000);
+  if (!isAndroid) {
+    setInterval(async () => {
+      if (bkBusy.size || document.hidden || !scanBkOk()) return;
+      const t = tracks.find((x) => !x.bpm && x.metaDone && (x.file || (x.path && native)));
+      if (!t) return;
+      try {
+        let buf;
+        if (t.file) buf = await t.file.arrayBuffer();
+        else { const u = new Uint8Array(await native.readFile(t.path)); buf = u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength); }
+        if (buf.byteLength > 80 * 1024 * 1024) { t.bpm = -1; return; }
+        await analyzeTrack(t, buf);
+      } catch (_) { t.bpm = -1; }
+    }, 3000);
+  }
+  // в фоне разбираем, только когда не идёт загрузка медиатеки и не грузится трек
+  const scanBkOk = () => !scanning;
 
   // Поколение загрузки на каждую деку: опоздавшая загрузка (долгое скачивание) не перезапишет то, что уже играет
   const deckGen = [0, 0];
@@ -978,7 +1071,7 @@
   }
 
   let skipped = 0; // сколько битых треков подряд пропущено при автопереходе
-  // mode: 'cut' — сразу, 'gapless' — по окончании, 'fade' — кроссфейд
+  // mode: 'cut' — сразу, 'gapless' — по окончании, 'early' — без паузы (старт следующей до конца), 'fade' — кроссфейд
   async function playAt(pos, mode) {
     if (pos < 0 || pos >= queue.length) return;
     const t = byKey.get(queue[pos]);
@@ -1007,6 +1100,7 @@
       }
       pre = null;
       engine.apply('speed'); // playbackRate сбрасывается при смене src
+      const t0 = performance.now();
       const p = next.play();
       if (next !== old) {
         if (mode === 'fade') {
@@ -1014,6 +1108,13 @@
           engine.crossfade(len);
           fadeUntil = Date.now() + len * 1000;
           setTimeout(() => { if (engine.audio !== old) old.pause(); }, len * 1000 + 150);
+        } else if (mode === 'early') {
+          // переход без паузы: новая дека уже реально играет — тогда за 20 мс меняем местами
+          await p;
+          if (token !== playToken) return;
+          earlyLat = Math.min(0.15, Math.max(0.005, earlyLat * 0.6 + (performance.now() - t0) / 1000 * 0.4));
+          engine.crossfade(0.01);
+          setTimeout(() => { if (engine.audio !== old) old.pause(); }, 150);
         } else {
           engine.swap();
           old.pause();
@@ -1027,7 +1128,7 @@
       console.error(e);
       fading = false;
       toast('Не удалось открыть: ' + t.name);
-      if (mode === 'gapless' || mode === 'fade') {
+      if (mode === 'gapless' || mode === 'fade' || mode === 'early') {
         skipped = (skipped || 0) + 1;
         const np = nextPos(true);
         if (np >= 0 && skipped < Math.min(queue.length, 20)) { setTimeout(() => playAt(np, 'gapless'), 300); return; }
@@ -1059,6 +1160,7 @@
   decks.forEach((d) => {
     d.addEventListener('ended', (e) => {
       if (!isActive(e)) return;
+      if (early && early.deck === e.target) return; // следующая уже стартует заранее
       if (sleepTrack) { sleepStop('Таймер сна: трек доиграл'); return; }
       if (settings.repeat === 'one') { A().currentTime = 0; A().play(); return; }
       const np = nextPos(true);
@@ -1084,14 +1186,15 @@
 
   function applyAccent() {
     const t = curTrack();
-    if (settings.coverAccent && t && t.accent) applyTheme(settings.theme, t.accent, t.accent2);
+    if (settings.coverAccent && t && t.accent) applyTheme(settings.theme, t.accent, t.accent2, true);
     else applyTheme(settings.theme, settings.accent);
   }
 
   function showMeta() {
     const t = curTrack();
     $('np-title').textContent = t ? t.title : 'Ничего не играет';
-    $('np-artist').textContent = t ? t.artist + (t.album ? ' · ' + t.album : '') : 'Добавьте треки';
+    $('np-artist').textContent = t ? t.artist + (t.album ? ' · ' + t.album : '') + bkText(t) : 'Добавьте треки';
+    try { drawWave(true); } catch (_) {}
     $('mini-title').textContent = t ? t.title : '—';
     $('mini-artist').textContent = t ? t.artist : '';
     $('cover-letter').textContent = t ? (t.title[0] || 'S').toUpperCase() : 'S';
@@ -1142,6 +1245,7 @@
     const a = A();
     const d = a.duration || 0;
     if (!seeking) setRange($('seek'), d ? (a.currentTime / d) * 1000 : 0);
+    drawWave();
     $('t-cur').textContent = fmt(a.currentTime);
     $('t-dur').textContent = fmt(d);
     $('mini-progress').style.width = (d ? (a.currentTime / d) * 100 : 0) + '%';
@@ -1158,11 +1262,26 @@
     const started = pre && pre.pos === np && pre.key === queue[np]; // уже грузится, готово или не открылось
     if (rem < cf + 10 && !started && Date.now() > fadeUntil) preload(np);
     if (cf > 0 && !fading && !(started && pre.failed) && rem <= cf && d > cf * 2 + 1) { fading = true; playAt(np, 'fade'); }
+    // Без кроссфейда: запускаем следующую деку чуть раньше конца, чтобы между треками не было щели
+    if (!cf && !early && rem < 1 && preReady(np) && engine.idle.readyState >= 3) {
+      const deck = a, mine = early = { deck };
+      const left = () => (deck.duration - deck.currentTime) / (deck.playbackRate || 1);
+      const fire = () => {
+        if (early !== mine) return;
+        const go = engine.audio === deck && !deck.paused && preReady(np) && nextPos(true) === np && !sleepTrack && settings.repeat !== 'one';
+        if (!go) { early = null; return; }
+        const l = left() - earlyLat - 0.004;
+        if (l > 0.004) { setTimeout(fire, l * 1000); return; } // таймер мог сработать рано — дожидаемся точнее
+        playAt(np, 'early').finally(() => { if (early === mine) early = null; });
+      };
+      setTimeout(fire, Math.max(0, (rem - earlyLat - 0.004) * 1000));
+    }
   }
   $('seek').addEventListener('input', (e) => {
     seeking = true;
     paintRange(e.target);
     $('t-cur').textContent = fmt((e.target.value / 1000) * (A().duration || 0));
+    drawWave();
   });
   $('seek').addEventListener('change', (e) => {
     if (A().duration) A().currentTime = (e.target.value / 1000) * A().duration;
@@ -1340,6 +1459,81 @@
   $('eq-on').onchange = (e) => { engine.set('eqOn', e.target.checked); saveFx(); };
   $('preamp').addEventListener('input', (e) => { engine.set('preamp', +e.target.value); syncEq(); saveFx(); });
   $('eq-reset').onclick = () => { eqSel.value = 'flat'; engine.set('preamp', 0); eqSel.onchange(); };
+
+  // ---------- AutoEQ: коррекция под модель наушников ----------
+  // Профили — открытая база AutoEQ (github.com/jaakkopasanen/AutoEq, MIT): замеры наушников и фильтры,
+  // которые выравнивают их АЧХ. Список (~9000 моделей) качаем один раз и держим в IndexedDB неделю.
+  const AEQ_BASE = 'https://raw.githubusercontent.com/jaakkopasanen/AutoEq/master/results/';
+  let aeqIndex = null;
+  async function aeqList() {
+    if (aeqIndex) return aeqIndex;
+    const c = await metaDb.get('aeq:index');
+    if (c && c.at > Date.now() - 7 * 864e5 && Array.isArray(c.list) && c.list.length) return (aeqIndex = c.list);
+    const md = await netText(AEQ_BASE + 'INDEX.md');
+    const list = [];
+    for (const line of String(md).split('\n')) {
+      const m = /^- \[(.+?)\]\(\.\/(.+)\) by (.+?)\s*$/.exec(line);
+      if (m) list.push([m[1], m[2], m[3]]);
+    }
+    if (!list.length) throw new Error('пустой список');
+    metaDb.put('aeq:index', { at: Date.now(), list });
+    return (aeqIndex = list);
+  }
+  function aeqParse(txt) {
+    const pre = /Preamp:\s*(-?[\d.]+)\s*dB/i.exec(txt);
+    const f = [];
+    for (const m of String(txt).matchAll(/Filter\s*\d+:\s*ON\s+(LSC|HSC|PK|LS|HS)\s+Fc\s+([\d.]+)\s*Hz\s+Gain\s+(-?[\d.]+)\s*dB\s+Q\s+([\d.]+)/gi)) {
+      f.push([m[1].toUpperCase(), +m[2], +m[3], +m[4]]);
+    }
+    return f.length ? { pre: pre ? +pre[1] : 0, f: f.slice(0, 10) } : null;
+  }
+  const aeqCard = document.createElement('div');
+  aeqCard.className = 'card aeq-card';
+  $('eq-reset').after(aeqCard);
+  function aeqUI() {
+    const a = engine.state.aeq;
+    aeqCard.innerHTML = '<h3>AutoEQ: под наушники</h3>' +
+      '<p class="hint">Выберите свою модель: эквалайзер выровняет её звучание по точным замерам (открытая база AutoEQ). ' +
+      'Работает вместе с обычным эквалайзером.</p>' +
+      (a ? '<div class="aeq-cur"><span>Профиль: <b>' + esc(a.name) + '</b></span><button class="btn ghost" data-aeq="off">Выключить</button></div>' : '') +
+      '<input class="search aeq-q" type="search" placeholder="Модель, например AirPods Pro или WH-1000XM4">' +
+      '<div class="aeq-list"></div>';
+  }
+  aeqUI();
+  let aeqT = 0;
+  aeqCard.addEventListener('input', (e) => {
+    if (!e.target.classList.contains('aeq-q')) return;
+    clearTimeout(aeqT);
+    aeqT = setTimeout(async () => {
+      const box = aeqCard.querySelector('.aeq-list');
+      const q = e.target.value.trim().toLowerCase();
+      if (q.length < 2) { box.innerHTML = ''; return; }
+      if (!aeqIndex) box.innerHTML = '<p class="hint">Загружаю список наушников…</p>';
+      let list;
+      try { list = await aeqList(); } catch (err) { box.innerHTML = '<p class="hint">Не удалось загрузить список: ' + esc(err.message || err) + '</p>'; return; }
+      if (e.target.value.trim().toLowerCase() !== q) return; // пока грузили, запрос поменялся
+      const words = q.split(/\s+/);
+      const hits = list.filter((x) => { const n = x[0].toLowerCase(); return words.every((w) => n.includes(w)); }).slice(0, 40);
+      box.innerHTML = hits.length ? hits.map((x) => '<button class="aeq-it" data-p="' + esc(x[1]) + '" data-n="' + esc(x[0]) + '"><b>' + esc(x[0]) + '</b><small>' + esc(x[2]) + '</small></button>').join('')
+        : '<p class="hint">Ничего не нашлось. Попробуйте короче, например «airpods» или «1000xm4».</p>';
+    }, 250);
+  });
+  aeqCard.addEventListener('click', async (e) => {
+    if (e.target.closest('[data-aeq="off"]')) { engine.set('aeq', null); saveFx(); aeqUI(); toast('AutoEQ выключен'); return; }
+    const it = e.target.closest('.aeq-it');
+    if (!it) return;
+    const path = it.dataset.p, name = it.dataset.n;
+    const file = path.split('/').pop();
+    try {
+      const prof = aeqParse(await netText(AEQ_BASE + path + '/' + file + '%20ParametricEQ.txt'));
+      if (!prof) throw new Error('в профиле нет фильтров');
+      engine.set('aeq', Object.assign({ name: name + ' · ' + it.querySelector('small').textContent }, prof));
+      saveFx(); aeqUI();
+      toast('AutoEQ: ' + name);
+    } catch (err) {
+      toast('Профиль не загрузился: ' + (err.message || err));
+    }
+  });
   function syncEq() {
     const s = engine.state;
     $('eq-on').checked = s.eqOn;
@@ -1383,6 +1577,9 @@
     ['Обычный', {}],
     ['Nightcore', { speed: 1.25, vinyl: true }],
     ['Slowed + Reverb', { speed: 0.85, vinyl: true, reverbMix: 0.45, reverbSize: 4 }],
+    ['Sped Up', { speed: 1.2, vinyl: true }],
+    ['Phonk Bass', { bass: 9, width: 1.25, reverbMix: 0.12, reverbSize: 1.5 }],
+    ['Daycore', { speed: 0.8, vinyl: true, reverbMix: 0.25, reverbSize: 3 }],
     ['8D', { eightD: true, eightDSpeed: 0.12, reverbMix: 0.2, reverbSize: 2.5 }],
     ['Концерт', { reverbMix: 0.35, reverbSize: 3.5, width: 1.3 }],
     ['Бас-буст', { bass: 9 }],
@@ -1391,13 +1588,23 @@
   ];
   const FX_KEYS = ['speed', 'pitch', 'vinyl', 'reverbMix', 'reverbSize', 'echoMix', 'echoTime', 'echoFeedback',
     'bass', 'width', 'balance', 'eightD', 'eightDSpeed', 'karaoke'];
-  FX_PRESETS.forEach(([name, vals]) => {
+  function applyFxPreset(name) {
+    const p = FX_PRESETS.find((x) => x[0] === name);
+    if (!p) return;
+    FX_KEYS.forEach((k) => engine.set(k, k in p[1] ? p[1][k] : DEFAULT_FX[k]));
+    syncFx(); saveFx();
+  }
+  // какой пресет сейчас включён (все эффекты совпадают), '' — свои настройки
+  function fxPresetName() {
+    const s = engine.state;
+    const same = (a, b) => (typeof a === 'number' && typeof b === 'number' ? Math.abs(a - b) < 1e-3 : a === b);
+    const p = FX_PRESETS.find(([, v]) => FX_KEYS.every((k) => same(s[k], k in v ? v[k] : DEFAULT_FX[k])));
+    return p ? p[0] : '';
+  }
+  FX_PRESETS.forEach(([name]) => {
     const b = document.createElement('button');
     b.className = 'chip'; b.textContent = name;
-    b.onclick = () => {
-      FX_KEYS.forEach((k) => engine.set(k, k in vals ? vals[k] : DEFAULT_FX[k]));
-      syncFx(); saveFx(); toast('Пресет: ' + name);
-    };
+    b.onclick = () => { applyFxPreset(name); toast('Пресет: ' + name); };
     $('fx-presets').appendChild(b);
   });
   $('fx-reset').onclick = () => {
@@ -1428,6 +1635,7 @@
     if (s.bass > 0) fx.push('Бас');
     if (s.karaoke > 0.01) fx.push('Караоке');
     $('q-fx').textContent = fx.join(' · ');
+    emitApp('fx');
   }
 
   // ---------- Таймер сна ----------
@@ -1492,27 +1700,76 @@
   }
   $('accent-color').addEventListener('input', (e) => { settings.accent = e.target.value; applyAccent(); saveSettings(); });
   $('cover-accent').onchange = (e) => { settings.coverAccent = e.target.checked; applyAccent(); saveSettings(); };
+  // 2.2: цвета из обложки по всему приложению включаем всем один раз (дальше — как выберет пользователь)
+  if (!settings.design22) { settings.design22 = 1; settings.coverAccent = true; saveSettings(); setTimeout(setTheme, 0); }
   $('accent-reset').onclick = () => { settings.accent = null; setTheme(); saveSettings(); };
 
-  // ---------- Визуализатор ----------
+  // ---------- Визуализатор и «бит» ----------
+  // Только читает анализатор после громкости — в звук ничего не добавляет.
+  // SquadBeat.level (0..1) — сила баса для свечения и живого фона; считаем в том же кадре, второй раз анализатор не трогаем.
   const canvas = $('viz');
   const c2d = canvas.getContext('2d');
-  let freq = null;
-  function draw() {
+  let freq = null, wave = null, lastDraw = 0;
+  const beat = window.SquadBeat = { level: 0, on: false };
+  const VIZ = { bars: 'Столбики', circle: 'Круг', wave: 'Волна', particles: 'Частицы', off: 'Выкл.' };
+  if (!(settings.viz in VIZ)) settings.viz = 'bars';
+  const parts = [];
+  function draw(ts) {
     requestAnimationFrame(draw);
+    if (isAndroid && ts - lastDraw < 30) return; // на телефоне хватит ~30 кадров/с
+    lastDraw = ts;
     const an = engine.analyser;
     const w = canvas.clientWidth, h = canvas.clientHeight;
-    if (!w) return;
+    const playing = !!an && !A().paused;
+    beat.on = playing;
+    if (!playing) beat.level *= 0.9;
+    if (!w) { if (playing && beat.want) bassOnly(an); return; }
     const dpr = window.devicePixelRatio || 1;
     if (canvas.width !== w * dpr) { canvas.width = w * dpr; canvas.height = h * dpr; }
     c2d.setTransform(dpr, 0, 0, dpr, 0, 0);
     c2d.clearRect(0, 0, w, h);
-    if (!an || A().paused) return;
-    if (!freq) freq = new Uint8Array(an.frequencyBinCount);
-    an.getByteFrequencyData(freq);
-    const bars = 48;
+    if (!playing) return;
+    bassOnly(an);
+    const mode = settings.viz;
+    if (mode === 'off') return;
+    c2d.fillStyle = c2d.strokeStyle = 'rgba(255,255,255,0.55)';
+    if (mode === 'wave') {
+      if (!wave) wave = new Uint8Array(an.fftSize);
+      an.getByteTimeDomainData(wave);
+      c2d.lineWidth = 2.5; c2d.lineJoin = 'round';
+      c2d.beginPath();
+      const n = 256, step = Math.floor(wave.length / n);
+      for (let i = 0; i < n; i++) { const y = h * 0.78 + (wave[i * step] - 128) / 128 * h * 0.18; if (i) c2d.lineTo(i / (n - 1) * w, y); else c2d.moveTo(0, y); }
+      c2d.stroke();
+      return;
+    }
+    if (mode === 'particles') {
+      if (parts.length < 46) parts.push({ x: Math.random(), y: 1.05, s: 0.6 + Math.random() * 1.6, v: 0.002 + Math.random() * 0.004 });
+      const boost = 1 + beat.level * 5;
+      for (const p of parts) {
+        p.y -= p.v * boost;
+        if (p.y < -0.05) { p.y = 1.05; p.x = Math.random(); }
+        c2d.globalAlpha = Math.min(1, p.y * 1.4) * 0.8;
+        c2d.beginPath(); c2d.arc(p.x * w, p.y * h, p.s * (1 + beat.level * 2.2), 0, Math.PI * 2); c2d.fill();
+      }
+      c2d.globalAlpha = 1;
+      return;
+    }
+    const bars = mode === 'circle' ? 72 : 48;
+    if (mode === 'circle') {
+      const cx = w / 2, cy = h / 2, r0 = w * 0.3;
+      c2d.lineWidth = Math.max(2, w / 160); c2d.lineCap = 'round';
+      c2d.beginPath();
+      for (let i = 0; i < bars; i++) {
+        const k = i < bars / 2 ? i : bars - 1 - i; // зеркально: низы сверху, верха снизу с обеих сторон
+        const v = freq[Math.floor(Math.pow(k / (bars / 2), 2) * (freq.length * 0.7))] / 255;
+        const a = i / bars * Math.PI * 2 - Math.PI / 2, l = r0 + 4 + v * w * 0.17;
+        c2d.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0); c2d.lineTo(cx + Math.cos(a) * l, cy + Math.sin(a) * l);
+      }
+      c2d.stroke();
+      return;
+    }
     const bw = w / bars;
-    c2d.fillStyle = 'rgba(255,255,255,0.55)';
     for (let i = 0; i < bars; i++) {
       // логарифмическая шкала частот
       const idx = Math.floor(Math.pow(i / bars, 2) * (freq.length * 0.7));
@@ -1521,7 +1778,67 @@
       c2d.fillRect(i * bw + 1.5, h - bh, bw - 3, bh);
     }
   }
+  // бас 40–140 Гц: быстро вверх на ударе, плавно вниз
+  function bassOnly(an) {
+    if (!freq) freq = new Uint8Array(an.frequencyBinCount);
+    an.getByteFrequencyData(freq);
+    const hz = engine.ctx.sampleRate / an.fftSize;
+    const a = Math.max(1, Math.round(40 / hz)), b = Math.max(a + 1, Math.round(140 / hz));
+    let sum = 0;
+    for (let i = a; i < b; i++) sum += freq[i];
+    const v = Math.max(0, (sum / (b - a) / 255 - 0.45) / 0.5); // тихий фон не светится
+    beat.level = v > beat.level ? beat.level + (v - beat.level) * 0.6 : beat.level * 0.88 + v * 0.12;
+  }
   requestAnimationFrame(draw);
+  // выбор визуализатора на обложке
+  const vcard = document.createElement('div');
+  vcard.className = 'card';
+  vcard.innerHTML = '<h3>Визуализатор</h3><p class="hint">Что рисуется поверх обложки под музыку' + (apkUI ? '' : ' (на ПК — в плеере на всё окно: клик по обложке внизу)') + '. На звук не влияет.</p><div class="chips viz-chips">' +
+    Object.entries(VIZ).map(([k, n]) => '<button class="chip' + (k === settings.viz ? ' on' : '') + '" data-viz="' + k + '">' + n + '</button>').join('') + '</div>';
+  $('cover-accent').closest('.card').after(vcard);
+  vcard.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-viz]');
+    if (!b) return;
+    settings.viz = b.dataset.viz; saveSettings();
+    vcard.querySelectorAll('[data-viz]').forEach((x) => x.classList.toggle('on', x === b));
+  });
+
+  // ---------- Ползунок волной ----------
+  // Форма трека (пики из разбора темпа) под ползунком: пройденное — акцентом, остальное — приглушённо
+  const seekBox = $('seek').parentElement;
+  const wcv = document.createElement('canvas');
+  wcv.className = 'seek-wave';
+  seekBox.prepend(wcv);
+  let waveKey = '', wavePv = -1;
+  function drawWave(force) {
+    const t = curTrack(), pk = t && t.peaks;
+    seekBox.classList.toggle('has-wave', !!pk);
+    if (!pk) { waveKey = ''; return; }
+    const inp = $('seek');
+    const w = inp.offsetWidth, h = 26;
+    if (!w) return;
+    const pv = Math.round(+inp.value);
+    const sig = t.key + '|' + w + '|' + inp.offsetLeft + '|' + inp.offsetTop + '|' + (settings.theme + settings.accent);
+    if (!force && waveKey === sig && Math.abs(pv - wavePv) < 2) return;
+    waveKey = sig; wavePv = pv;
+    const dpr = window.devicePixelRatio || 1;
+    wcv.style.left = inp.offsetLeft + 'px'; wcv.style.top = (inp.offsetTop + inp.offsetHeight / 2 - h / 2) + 'px';
+    wcv.style.width = w + 'px'; wcv.style.height = h + 'px';
+    wcv.width = Math.round(w * dpr); wcv.height = Math.round(h * dpr);
+    const g = wcv.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const cs = getComputedStyle(document.documentElement);
+    const acc = cs.getPropertyValue('--accent').trim() || '#ff2d48', dim = cs.getPropertyValue('--muted').trim() || '#888';
+    const n = Math.max(30, Math.min(pk.length, Math.floor(w / 3.2))), bw = w / n, done = pv / 1000 * w;
+    for (let i = 0; i < n; i++) {
+      const v = pk[Math.floor(i / n * pk.length)] / 255;
+      const bh = Math.max(2, v * h);
+      g.fillStyle = i * bw + bw / 2 <= done ? acc : dim;
+      g.globalAlpha = i * bw + bw / 2 <= done ? 1 : 0.45;
+      g.fillRect(i * bw + 0.6, (h - bh) / 2, Math.max(1, bw - 1.2), bh);
+    }
+  }
+  window.addEventListener('resize', () => drawWave(true));
 
   // ---------- Автопоиск музыки на устройстве ----------
   function restoreLast() {
@@ -1763,6 +2080,8 @@
     const t = makeTrack(d.name, {});
     if (d.title) t.title = d.title;
     if (d.artist) t.artist = d.artist;
+    // в Telegram часто нет исполнителя, а все артисты свалены в название: «KXRAIN- MELXMVNE- HERCULES»
+    else if (d.title) { const p = splitName(d.title); if (p && p.artist && p.title) { t.artist = p.artist; t.title = p.title; } }
     return Object.assign(t, { key: d.key, folder: d.folder, tg: d.tg, mime: d.mime, size: d.size });
   }
 
@@ -2380,9 +2699,12 @@
       delete v.volume; // громкость пресетом не трогаем
       engine.load(v);
       settings.eqPreset = 'custom'; saveSettings();
-      syncEq(); syncFx(); saveFx();
+      syncEq(); syncFx(); saveFx(); aeqUI();
     },
     setFx(k, v) { engine.set(k, v); syncFx(); saveFx(); },
+    fxPresets: () => FX_PRESETS.map((x) => x[0]),
+    fxPreset: fxPresetName,
+    applyFxPreset,
     pause: () => decks.forEach((d) => d.pause()),
     // включить список ключей с позиции i; shuffle — перемешать
     play(keys, i, shuffle) {

@@ -41,7 +41,7 @@
     '<div class="dl-lang"><button data-ln="tr" title="Перевод на русский под строками">Перевод</button><button data-ln="rm" title="Текст латиницей под строками">Латиницей</button></div>' +
     '<button class="chip dl-kara">' + svg(IC.mic) + '<span>Караоке</span></button></div>' +
     '<button class="icon-btn dl-close" title="Закрыть (Esc)">' + svg(IC.close) + '</button></header>' +
-    '<div class="dl-main"><aside class="dl-side"><div class="dl-cover"><img alt=""></div><div class="dl-np"><b></b><span></span></div>' +
+    '<div class="dl-main"><i class="dl-halo" aria-hidden="true"></i><aside class="dl-side"><div class="dl-cover"><img alt=""></div><div class="dl-np"><b></b><span></span></div>' +
     '<div class="dl-seek"><input type="range" min="0" max="1000" value="0"><div><span>0:00</span><span>0:00</span></div></div>' +
     '<div class="dl-ctl"></div></aside><div class="dl-body"><div class="dl-lines"></div></div></div>';
   document.body.appendChild(ov);
@@ -94,9 +94,22 @@
     kb.lastChild.textContent = on ? 'Голос убран' : 'Караоке';
     st.cur = -1;
   }
+  // ПК: визуализатор переезжает на большую обложку, пока открыт плеер на всё окно (в нижней панели его не видно)
+  const viz = $('viz'), vizHome = viz && viz.parentNode, vizNext = viz && viz.nextSibling;
+  const halo = ov.querySelector('.dl-halo'), glow = ov.querySelector('.dl-glow'), dcov = ov.querySelector('.dl-cover');
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+  function placeHalo() {
+    if (!st.open || !dcov.offsetWidth) return;
+    const m = ov.querySelector('.dl-main').getBoundingClientRect(), r = dcov.getBoundingClientRect();
+    halo.style.left = r.left - m.left + 'px'; halo.style.top = r.top - m.top + 'px';
+    halo.style.width = r.width + 'px'; halo.style.height = r.height + 'px';
+  }
+  if (window.ResizeObserver) new ResizeObserver(placeHalo).observe(dcov);
   function open(kara) {
     st.open = true;
     ov.classList.add('show');
+    if (!APK && viz) dcov.appendChild(viz);
+    requestAnimationFrame(placeHalo);
     bLyr.classList.add('on');
     if (kara !== st.kara) setKara(!!kara);
     load();
@@ -107,6 +120,9 @@
     ov.classList.remove('show');
     bLyr.classList.remove('on');
     cancelAnimationFrame(st.raf);
+    if (!APK && viz && vizHome) vizHome.insertBefore(viz, vizNext);
+    if (window.SquadBeat) window.SquadBeat.want = false;
+    st.bv = -1; halo.style.opacity = glow.style.opacity = halo.style.transform = '';
     if (st.kara) setKara(false); // закрыли — голос возвращается
     bKara.classList.remove('on');
   }
@@ -218,7 +234,7 @@
       const lines = L.parse(r.synced);
       if (lines.length) {
         st.lines = lines;
-        box.innerHTML = lines.map((l, i) => '<p data-i="' + i + '" data-t="' + l.t + '">' + (esc(l.text) || '♪') + '</p>').join('');
+        box.innerHTML = lines.map((l, i) => '<p data-i="' + i + '" data-t="' + l.t + '"><span class="lt">' + (esc(l.text) || '♪') + '</span></p>').join('');
       } else box.innerHTML = '<div class="dl-plain">' + esc(r.plain).replace(/\n/g, '<br>') + '</div>';
       if (r.src) box.insertAdjacentHTML('beforeend', '<p class="dl-src">Текст: ' + esc(r.src) + '</p>');
       st.r = r;
@@ -248,7 +264,26 @@
           el.classList.add('on');
           body.scrollTo({ top: el.offsetTop - body.clientHeight / 2 + el.offsetHeight / 2, behavior: st.cur === -1 ? 'auto' : 'smooth' });
         } else if (i < 0) body.scrollTo({ top: 0 });
-        st.cur = i;
+        st.cur = i; st.sw = -1;
+      }
+      // подсветка по словам: заливка бежит по строке, как в караоке
+      const lt = i >= 0 && box.querySelector('p.on .lt');
+      if (lt) {
+        const pct = Math.round(L.sung(st.lines, i, now) * 1000) / 10;
+        if (pct !== st.sw) { st.sw = pct; lt.style.setProperty('--p', pct + '%'); }
+      }
+    }
+    // свечение вокруг обложки и пятна фона дышат в ритм баса (только opacity/transform)
+    const bt = window.SquadBeat;
+    if (bt && !reduced.matches) {
+      const on = S.playing() && !document.hidden;
+      bt.want = on;
+      const v = on ? Math.round(Math.min(1, bt.level) * 40) / 40 : 0;
+      if (v !== st.bv) {
+        st.bv = v;
+        glow.style.opacity = (0.45 + v * 0.35).toFixed(3);
+        halo.style.opacity = (0.25 + v * v * 0.75).toFixed(3);
+        halo.style.transform = 'scale(' + (1 + v * 0.05).toFixed(3) + ')';
       }
     }
     st.raf = requestAnimationFrame(loop);
