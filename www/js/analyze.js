@@ -141,7 +141,7 @@ onmessage = (e) => {
       const w = waiting.get(e.data.id);
       if (!w) return;
       waiting.delete(e.data.id);
-      if (e.data.error) w.rej(new Error(e.data.error)); else w.res({ bpm: e.data.bpm, key: e.data.key });
+      if (e.data.error) w.rej(new Error(e.data.error)); else w.res({ bpm: e.data.bpm, key: e.data.key, peaks: w.peaks });
     };
     worker.onerror = (e) => { waiting.forEach((w) => w.rej(new Error(e.message || 'worker'))); waiting.clear(); worker = null; };
     return worker;
@@ -151,6 +151,16 @@ onmessage = (e) => {
   async function run(buf) {
     const AC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
     const ab = await new AC(1, 1, SR).decodeAudioData(buf);
+    // форма волны для ползунка: 160 столбиков по пикам всего трека (0..255)
+    const PK = 160, ch0 = ab.getChannelData(0), ch1 = ab.numberOfChannels > 1 ? ab.getChannelData(1) : ch0;
+    const step = ab.length / PK, peaks = new Array(PK);
+    let top = 1e-6;
+    for (let b = 0; b < PK; b++) {
+      let m = 0;
+      for (let i = Math.floor(b * step), e = Math.floor((b + 1) * step); i < e; i += 4) { const v = Math.abs(ch0[i]) + Math.abs(ch1[i]); if (v > m) m = v; }
+      peaks[b] = m; if (m > top) top = m;
+    }
+    for (let b = 0; b < PK; b++) peaks[b] = Math.round(peaks[b] / top * 255);
     const start = ab.duration > 60 ? Math.floor(10 * SR) : 0; // вступление часто без барабанов
     const len = Math.min(ab.length - start, MAX_SEC * SR);
     if (len < 8 * SR) throw new Error('слишком короткий трек');
@@ -161,7 +171,7 @@ onmessage = (e) => {
     }
     const id = ++seq;
     return new Promise((res, rej) => {
-      waiting.set(id, { res, rej });
+      waiting.set(id, { res, rej, peaks });
       getWorker().postMessage({ id, pcm, sr: SR }, [pcm.buffer]);
     });
   }

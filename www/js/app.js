@@ -303,7 +303,7 @@
   async function loadMeta(t) {
     await loadTags(t);
     const bk = await metaDb.get('bk:' + t.key);
-    if (bk) { t.bpm = bk.bpm > 0 ? bk.bpm : -1; t.tone = bk.key || ''; }
+    if (bk) { t.bpm = bk.bpm > 0 ? bk.bpm : -1; t.tone = bk.key || ''; t.peaks = bk.peaks || null; }
     const ed = await metaDb.get('edit:' + t.key);
     if (ed) { t.netArt = !!ed.art; applyMeta(t, ed); }
   }
@@ -409,7 +409,7 @@
   };
   // по кругу Камелота: соседние тональности сводятся без фальши (1A, 1B, 2A, …)
   function toneOrd(t) {
-    const c = t.tone && window.SquadAnalyze ? SquadAnalyze.camelot(t.tone) : '';
+    const c = t.tone && window.SquadAnalyze ? window.SquadAnalyze.camelot(t.tone) : '';
     return c ? parseInt(c, 10) * 2 + (c.endsWith('B') ? 1 : 0) : 999;
   }
   const bpmOrd = (t) => (t.bpm > 0 ? t.bpm : 999); // -1 — не разобрался, 0 — ещё не разбирали
@@ -996,9 +996,10 @@
     if (!t || t.bpm || bkBusy.has(t.key) || !window.SquadAnalyze) return;
     bkBusy.add(t.key);
     try {
-      const r = await SquadAnalyze.run(buf);
-      t.bpm = r.bpm > 0 ? r.bpm : -1; t.tone = r.key || '';
-      metaDb.put('bk:' + t.key, { bpm: r.bpm || 0, key: t.tone });
+      const r = await window.SquadAnalyze.run(buf);
+      t.bpm = r.bpm > 0 ? r.bpm : -1; t.tone = r.key || ''; t.peaks = r.peaks || null;
+      metaDb.put('bk:' + t.key, { bpm: r.bpm || 0, key: t.tone, peaks: t.peaks });
+      if (t === curTrack()) drawWave(true);
       if (t === curTrack()) showMeta();
       if (settings.sort === 'bpm' || settings.sort === 'tone') scheduleRender();
     } catch (e) {
@@ -1185,7 +1186,7 @@
 
   function applyAccent() {
     const t = curTrack();
-    if (settings.coverAccent && t && t.accent) applyTheme(settings.theme, t.accent, t.accent2);
+    if (settings.coverAccent && t && t.accent) applyTheme(settings.theme, t.accent, t.accent2, true);
     else applyTheme(settings.theme, settings.accent);
   }
 
@@ -1193,6 +1194,7 @@
     const t = curTrack();
     $('np-title').textContent = t ? t.title : 'Ничего не играет';
     $('np-artist').textContent = t ? t.artist + (t.album ? ' · ' + t.album : '') + bkText(t) : 'Добавьте треки';
+    try { drawWave(true); } catch (_) {}
     $('mini-title').textContent = t ? t.title : '—';
     $('mini-artist').textContent = t ? t.artist : '';
     $('cover-letter').textContent = t ? (t.title[0] || 'S').toUpperCase() : 'S';
@@ -1243,6 +1245,7 @@
     const a = A();
     const d = a.duration || 0;
     if (!seeking) setRange($('seek'), d ? (a.currentTime / d) * 1000 : 0);
+    drawWave();
     $('t-cur').textContent = fmt(a.currentTime);
     $('t-dur').textContent = fmt(d);
     $('mini-progress').style.width = (d ? (a.currentTime / d) * 100 : 0) + '%';
@@ -1278,6 +1281,7 @@
     seeking = true;
     paintRange(e.target);
     $('t-cur').textContent = fmt((e.target.value / 1000) * (A().duration || 0));
+    drawWave();
   });
   $('seek').addEventListener('change', (e) => {
     if (A().duration) A().currentTime = (e.target.value / 1000) * A().duration;
@@ -1696,27 +1700,76 @@
   }
   $('accent-color').addEventListener('input', (e) => { settings.accent = e.target.value; applyAccent(); saveSettings(); });
   $('cover-accent').onchange = (e) => { settings.coverAccent = e.target.checked; applyAccent(); saveSettings(); };
+  // 2.2: цвета из обложки по всему приложению включаем всем один раз (дальше — как выберет пользователь)
+  if (!settings.design22) { settings.design22 = 1; settings.coverAccent = true; saveSettings(); setTimeout(setTheme, 0); }
   $('accent-reset').onclick = () => { settings.accent = null; setTheme(); saveSettings(); };
 
-  // ---------- Визуализатор ----------
+  // ---------- Визуализатор и «бит» ----------
+  // Только читает анализатор после громкости — в звук ничего не добавляет.
+  // SquadBeat.level (0..1) — сила баса для свечения и живого фона; считаем в том же кадре, второй раз анализатор не трогаем.
   const canvas = $('viz');
   const c2d = canvas.getContext('2d');
-  let freq = null;
-  function draw() {
+  let freq = null, wave = null, lastDraw = 0;
+  const beat = window.SquadBeat = { level: 0, on: false };
+  const VIZ = { bars: 'Столбики', circle: 'Круг', wave: 'Волна', particles: 'Частицы', off: 'Выкл.' };
+  if (!(settings.viz in VIZ)) settings.viz = 'bars';
+  const parts = [];
+  function draw(ts) {
     requestAnimationFrame(draw);
+    if (isAndroid && ts - lastDraw < 30) return; // на телефоне хватит ~30 кадров/с
+    lastDraw = ts;
     const an = engine.analyser;
     const w = canvas.clientWidth, h = canvas.clientHeight;
-    if (!w) return;
+    const playing = !!an && !A().paused;
+    beat.on = playing;
+    if (!playing) beat.level *= 0.9;
+    if (!w) { if (playing && beat.want) bassOnly(an); return; }
     const dpr = window.devicePixelRatio || 1;
     if (canvas.width !== w * dpr) { canvas.width = w * dpr; canvas.height = h * dpr; }
     c2d.setTransform(dpr, 0, 0, dpr, 0, 0);
     c2d.clearRect(0, 0, w, h);
-    if (!an || A().paused) return;
-    if (!freq) freq = new Uint8Array(an.frequencyBinCount);
-    an.getByteFrequencyData(freq);
-    const bars = 48;
+    if (!playing) return;
+    bassOnly(an);
+    const mode = settings.viz;
+    if (mode === 'off') return;
+    c2d.fillStyle = c2d.strokeStyle = 'rgba(255,255,255,0.55)';
+    if (mode === 'wave') {
+      if (!wave) wave = new Uint8Array(an.fftSize);
+      an.getByteTimeDomainData(wave);
+      c2d.lineWidth = 2.5; c2d.lineJoin = 'round';
+      c2d.beginPath();
+      const n = 256, step = Math.floor(wave.length / n);
+      for (let i = 0; i < n; i++) { const y = h * 0.78 + (wave[i * step] - 128) / 128 * h * 0.18; if (i) c2d.lineTo(i / (n - 1) * w, y); else c2d.moveTo(0, y); }
+      c2d.stroke();
+      return;
+    }
+    if (mode === 'particles') {
+      if (parts.length < 46) parts.push({ x: Math.random(), y: 1.05, s: 0.6 + Math.random() * 1.6, v: 0.002 + Math.random() * 0.004 });
+      const boost = 1 + beat.level * 5;
+      for (const p of parts) {
+        p.y -= p.v * boost;
+        if (p.y < -0.05) { p.y = 1.05; p.x = Math.random(); }
+        c2d.globalAlpha = Math.min(1, p.y * 1.4) * 0.8;
+        c2d.beginPath(); c2d.arc(p.x * w, p.y * h, p.s * (1 + beat.level * 2.2), 0, Math.PI * 2); c2d.fill();
+      }
+      c2d.globalAlpha = 1;
+      return;
+    }
+    const bars = mode === 'circle' ? 72 : 48;
+    if (mode === 'circle') {
+      const cx = w / 2, cy = h / 2, r0 = w * 0.3;
+      c2d.lineWidth = Math.max(2, w / 160); c2d.lineCap = 'round';
+      c2d.beginPath();
+      for (let i = 0; i < bars; i++) {
+        const k = i < bars / 2 ? i : bars - 1 - i; // зеркально: низы сверху, верха снизу с обеих сторон
+        const v = freq[Math.floor(Math.pow(k / (bars / 2), 2) * (freq.length * 0.7))] / 255;
+        const a = i / bars * Math.PI * 2 - Math.PI / 2, l = r0 + 4 + v * w * 0.17;
+        c2d.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0); c2d.lineTo(cx + Math.cos(a) * l, cy + Math.sin(a) * l);
+      }
+      c2d.stroke();
+      return;
+    }
     const bw = w / bars;
-    c2d.fillStyle = 'rgba(255,255,255,0.55)';
     for (let i = 0; i < bars; i++) {
       // логарифмическая шкала частот
       const idx = Math.floor(Math.pow(i / bars, 2) * (freq.length * 0.7));
@@ -1725,7 +1778,67 @@
       c2d.fillRect(i * bw + 1.5, h - bh, bw - 3, bh);
     }
   }
+  // бас 40–140 Гц: быстро вверх на ударе, плавно вниз
+  function bassOnly(an) {
+    if (!freq) freq = new Uint8Array(an.frequencyBinCount);
+    an.getByteFrequencyData(freq);
+    const hz = engine.ctx.sampleRate / an.fftSize;
+    const a = Math.max(1, Math.round(40 / hz)), b = Math.max(a + 1, Math.round(140 / hz));
+    let sum = 0;
+    for (let i = a; i < b; i++) sum += freq[i];
+    const v = Math.max(0, (sum / (b - a) / 255 - 0.45) / 0.5); // тихий фон не светится
+    beat.level = v > beat.level ? beat.level + (v - beat.level) * 0.6 : beat.level * 0.88 + v * 0.12;
+  }
   requestAnimationFrame(draw);
+  // выбор визуализатора на обложке
+  const vcard = document.createElement('div');
+  vcard.className = 'card';
+  vcard.innerHTML = '<h3>Визуализатор</h3><p class="hint">Что рисуется поверх обложки под музыку' + (apkUI ? '' : ' (на ПК — в плеере на всё окно: клик по обложке внизу)') + '. На звук не влияет.</p><div class="chips viz-chips">' +
+    Object.entries(VIZ).map(([k, n]) => '<button class="chip' + (k === settings.viz ? ' on' : '') + '" data-viz="' + k + '">' + n + '</button>').join('') + '</div>';
+  $('cover-accent').closest('.card').after(vcard);
+  vcard.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-viz]');
+    if (!b) return;
+    settings.viz = b.dataset.viz; saveSettings();
+    vcard.querySelectorAll('[data-viz]').forEach((x) => x.classList.toggle('on', x === b));
+  });
+
+  // ---------- Ползунок волной ----------
+  // Форма трека (пики из разбора темпа) под ползунком: пройденное — акцентом, остальное — приглушённо
+  const seekBox = $('seek').parentElement;
+  const wcv = document.createElement('canvas');
+  wcv.className = 'seek-wave';
+  seekBox.prepend(wcv);
+  let waveKey = '', wavePv = -1;
+  function drawWave(force) {
+    const t = curTrack(), pk = t && t.peaks;
+    seekBox.classList.toggle('has-wave', !!pk);
+    if (!pk) { waveKey = ''; return; }
+    const inp = $('seek');
+    const w = inp.offsetWidth, h = 26;
+    if (!w) return;
+    const pv = Math.round(+inp.value);
+    const sig = t.key + '|' + w + '|' + inp.offsetLeft + '|' + inp.offsetTop + '|' + (settings.theme + settings.accent);
+    if (!force && waveKey === sig && Math.abs(pv - wavePv) < 2) return;
+    waveKey = sig; wavePv = pv;
+    const dpr = window.devicePixelRatio || 1;
+    wcv.style.left = inp.offsetLeft + 'px'; wcv.style.top = (inp.offsetTop + inp.offsetHeight / 2 - h / 2) + 'px';
+    wcv.style.width = w + 'px'; wcv.style.height = h + 'px';
+    wcv.width = Math.round(w * dpr); wcv.height = Math.round(h * dpr);
+    const g = wcv.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const cs = getComputedStyle(document.documentElement);
+    const acc = cs.getPropertyValue('--accent').trim() || '#ff2d48', dim = cs.getPropertyValue('--muted').trim() || '#888';
+    const n = Math.max(30, Math.min(pk.length, Math.floor(w / 3.2))), bw = w / n, done = pv / 1000 * w;
+    for (let i = 0; i < n; i++) {
+      const v = pk[Math.floor(i / n * pk.length)] / 255;
+      const bh = Math.max(2, v * h);
+      g.fillStyle = i * bw + bw / 2 <= done ? acc : dim;
+      g.globalAlpha = i * bw + bw / 2 <= done ? 1 : 0.45;
+      g.fillRect(i * bw + 0.6, (h - bh) / 2, Math.max(1, bw - 1.2), bh);
+    }
+  }
+  window.addEventListener('resize', () => drawWave(true));
 
   // ---------- Автопоиск музыки на устройстве ----------
   function restoreLast() {

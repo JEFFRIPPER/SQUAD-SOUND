@@ -45,11 +45,13 @@
   };
 
   // ---------- Настройки интерфейса ----------
-  const prefs = Object.assign({ bg: 'blur', shape: 'round', spin: false }, ls.get('prefs', {}));
+  const prefs = Object.assign({ bg: 'blur', shape: 'round', spin: false, glow: true }, ls.get('prefs', {}));
   function applyPrefs() {
     root.dataset.npBg = prefs.bg;
     root.dataset.npShape = prefs.shape;
     root.classList.toggle('np-spin', !!prefs.spin);
+    root.classList.toggle('np-glow', !!prefs.glow);
+    if (window.SquadNp) window.SquadNp.sync();
   }
   applyPrefs();
 
@@ -340,6 +342,14 @@
   const bg = document.createElement('div');
   bg.className = 'np-bg';
   now.prepend(bg);
+  // под обложкой и кнопкой «играть» — свечение, поверх фона — вспышка баса (см. «Живой плеер» ниже)
+  const pulse = document.createElement('i');
+  pulse.className = 'np-pulse';
+  const halo = document.createElement('i');
+  halo.className = 'np-halo';
+  const phalo = document.createElement('i');
+  phalo.className = 'np-halo np-phalo';
+  bg.after(pulse, halo, phalo);
   const top = document.createElement('div');
   top.className = 'np-top';
   top.innerHTML = '<button class="icon-btn np-round" data-np="close" aria-label="Свернуть">' + svg(IC.down) + '</button>' +
@@ -396,6 +406,7 @@
     // scrollHeight не годится: размытый фон (.np-bg) нарочно вылезает за края. Меряем по нижней панели кнопок
     const over = acts.getBoundingClientRect().bottom - (now.getBoundingClientRect().bottom - parseFloat(getComputedStyle(now).paddingBottom));
     if (over > 0.5) c.style.width = Math.max(120, c.getBoundingClientRect().width - over) + 'px';
+    placeGlow();
   }
   if (window.ResizeObserver) {
     const ro = new ResizeObserver(() => fitCover());
@@ -471,6 +482,157 @@
     now.style.transition = '';
     now.style.transform = '';
     if (dy > 120) closePlayer();
+  });
+
+  // ---------- Живой плеер: свечение и фон в ритм, пластинка, анимация смены трека, жесты ----------
+  // Всё это только читает SquadBeat (бас из того же анализатора, что и визуализатор) и двигает
+  // opacity/transform — это делает видеокарта, звук не трогается. Работает лишь когда плеер открыт,
+  // экран включён и музыка играет; на телефоне ~30 кадров/с.
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+  const beat = window.SquadBeat || { level: 0 };
+  const cv = $('cover');
+  // пластинка: блик и бороздки стоят на месте, крутится только картинка; тонарм уходит на паузе
+  const vinyl = document.createElement('i');
+  vinyl.className = 'np-vinyl';
+  const arm = document.createElement('div');
+  arm.className = 'np-arm';
+  arm.innerHTML = '<svg viewBox="0 0 100 100" aria-hidden="true"><defs><linearGradient id="np-arm-g" x1="0" x2="1"><stop offset="0" stop-color="#f4f4f6"/><stop offset="1" stop-color="#9a9aa2"/></linearGradient></defs>' +
+    '<circle cx="88" cy="10" r="7" fill="#2a2a2e" stroke="url(#np-arm-g)" stroke-width="2.5"/><circle cx="88" cy="10" r="2.6" fill="url(#np-arm-g)"/>' +
+    '<path d="M88 10 L87 50 L77 74" fill="none" stroke="url(#np-arm-g)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>' +
+    '<rect x="71" y="72" width="9" height="12" rx="2" transform="rotate(25 75.5 78)" fill="#d8d8de"/></svg>';
+  const tap = document.createElement('div');
+  tap.className = 'np-tap';
+  cv.append(vinyl, arm, tap);
+
+  function placeGlow() {
+    if (S.settings.tab !== 'player' || !now.clientWidth) return;
+    const nr = now.getBoundingClientRect(), cr = cv.getBoundingClientRect(), pb = $('btn-play').getBoundingClientRect();
+    const put = (el, r, k) => {
+      const w = r.width * k, h = r.height * k;
+      el.style.left = (r.left - nr.left + now.scrollLeft + (r.width - w) / 2) + 'px';
+      el.style.top = (r.top - nr.top + now.scrollTop + (r.height - h) / 2) + 'px';
+      el.style.width = w + 'px'; el.style.height = h + 'px';
+    };
+    put(halo, cr, 1);
+    put(phalo, pb, 1.1);
+  }
+
+  // кадр «бита»: пишем в стиль, только если значение заметно изменилось
+  let fxRaf = 0, fxLast = 0, fxV = -1, fxN = 0;
+  const fxActive = () => prefs.glow && !reduced.matches && S.settings.tab === 'player' && !document.hidden && S.playing();
+  function fxLoop(ts) {
+    fxRaf = 0;
+    if (!fxActive()) {
+      beat.want = false; fxV = -1;
+      [halo, phalo, pulse].forEach((el) => { el.style.opacity = ''; el.style.transform = ''; });
+      return;
+    }
+    fxRaf = requestAnimationFrame(fxLoop);
+    beat.want = true;
+    if (ts - fxLast < 33) return;
+    fxLast = ts;
+    if (++fxN % 30 === 0) placeGlow(); // раз в секунду сверяем место: шрифт/строки могли сдвинуть кнопку
+    const v = Math.round(Math.min(1, beat.level) * 40) / 40;
+    if (v === fxV) return;
+    fxV = v;
+    halo.style.opacity = (0.3 + v * v * 0.7).toFixed(3);
+    halo.style.transform = 'scale(' + (1 + v * 0.06).toFixed(3) + ')';
+    phalo.style.opacity = (0.3 + v * v * 0.7).toFixed(3);
+    phalo.style.transform = 'scale(' + (1 + v * 0.3).toFixed(3) + ')';
+    pulse.style.opacity = (v * 0.55).toFixed(3);
+  }
+  function fxKick() { if (!fxRaf && (fxActive() || fxV !== -1)) fxRaf = requestAnimationFrame(fxLoop); }
+
+  // вращение пластинки через Web Animations: скорость меняется плавно, без скачка угла
+  let spins = [], spinRate = 1;
+  const spinTargets = () => [...cv.querySelectorAll(':scope > img, :scope > video, :scope > .cover-letter')];
+  function spinSync() {
+    const on = prefs.shape === 'vinyl' && !reduced.matches;
+    if (!on) { spins.forEach((a) => a.cancel()); spins = []; return; }
+    const els = spinTargets();
+    if (spins.length !== els.length || spins.some((a, i) => a.effect.target !== els[i])) {
+      const t0 = spins.length ? spins[0].currentTime || 0 : 0;
+      spins.forEach((a) => a.cancel());
+      spins = els.map((el) => {
+        const a = el.animate([{ transform: 'rotate(0deg)' }, { transform: 'rotate(360deg)' }], { duration: 5000, iterations: Infinity });
+        a.currentTime = t0;
+        return a;
+      });
+    }
+    const run = S.playing() && S.settings.tab === 'player' && !document.hidden;
+    spins.forEach((a) => { a.playbackRate = spinRate; if (run) a.play(); else a.pause(); });
+  }
+  let rateT = 0;
+  function spinFast(ms) {
+    spinRate = 5; spinSync();
+    clearTimeout(rateT);
+    if (ms) rateT = setTimeout(() => { spinRate = 1; spinSync(); }, ms);
+  }
+  $('seek').addEventListener('input', () => { if (prefs.shape === 'vinyl') spinFast(0); });
+  $('seek').addEventListener('change', () => { if (prefs.shape === 'vinyl') { spinRate = 1; spinSync(); } });
+
+  function npSync() { spinSync(); fxKick(); placeGlow(); }
+  window.SquadNp = { sync: npSync };
+  S.on('play', npSync);
+  S.on('tab', () => { npSync(); if (S.settings.tab === 'player') requestAnimationFrame(placeGlow); });
+  document.addEventListener('visibilitychange', npSync);
+  reduced.addEventListener && reduced.addEventListener('change', npSync);
+  new MutationObserver(npSync).observe(cv, { childList: true }); // своя обложка/видео добавились — крутим и их
+
+  // смена трека: обложка въезжает с той стороны, куда листали, название проявляется из размытия
+  let lastKey = null, lastPos = -1, swipeDir = 0;
+  S.on('track', () => {
+    const t = S.cur(), k = t ? t.key : null;
+    if (k === lastKey) return;
+    const pos = S.queueInfo.pos;
+    const dir = swipeDir || (lastPos >= 0 && pos < lastPos ? -1 : 1);
+    const first = lastKey === null;
+    swipeDir = 0; lastKey = k; lastPos = pos;
+    if (first || !k || reduced.matches || S.settings.tab !== 'player' || document.hidden) return;
+    cv.animate([{ transform: 'translateX(' + dir * 30 + '%) scale(.9)', opacity: 0 }, { transform: 'none', opacity: 1 }],
+      { duration: 420, easing: 'cubic-bezier(.2,.8,.2,1)' });
+    now.querySelector('.meta').animate([{ filter: 'blur(10px)', opacity: 0, transform: 'translateX(' + dir * 16 + 'px)' }, { filter: 'blur(0)', opacity: 1, transform: 'none' }],
+      { duration: 460, easing: 'ease-out' });
+  });
+
+  // жесты на обложке: два касания слева/справа — ∓10 с (каждое следующее касание — ещё 10 с), свайп — соседний трек
+  let g = null, taps = { t: 0, side: 0, n: 0 };
+  function seekBy(sec, side) {
+    const tm = S.time();
+    if (!tm.dur) return;
+    S.seek(Math.max(0, Math.min(tm.dur - 0.5, tm.cur + sec)));
+    tap.className = 'np-tap ' + (side < 0 ? 'l' : 'r');
+    tap.textContent = (side < 0 ? '−' : '+') + taps.n * 10 + ' с';
+    void tap.offsetWidth; // перезапуск анимации подсказки
+    tap.classList.add('show');
+    if (prefs.shape === 'vinyl') spinFast(350);
+  }
+  cv.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) { g = null; return; }
+    g = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now(), dx: 0, dy: 0 };
+  }, { passive: true });
+  cv.addEventListener('touchmove', (e) => {
+    if (!g) return;
+    g.dx = e.touches[0].clientX - g.x; g.dy = e.touches[0].clientY - g.y;
+  }, { passive: true });
+  cv.addEventListener('touchcancel', () => { g = null; }, { passive: true });
+  cv.addEventListener('touchend', () => {
+    if (!g) return;
+    const { x, dx, dy, t } = g;
+    g = null;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      swipeDir = dx < 0 ? 1 : -1;
+      setTimeout(() => { swipeDir = 0; }, 1500); // «назад» мог просто перемотать трек в начало
+      if (navigator.vibrate) navigator.vibrate(8);
+      $(dx < 0 ? 'btn-next' : 'btn-prev').click();
+      return;
+    }
+    if (Math.abs(dx) > 12 || Math.abs(dy) > 12 || Date.now() - t > 350) return;
+    const r = cv.getBoundingClientRect(), side = x < r.left + r.width / 2 ? -1 : 1, ts = Date.now();
+    if (taps.side === side && ts - taps.t < (taps.n ? 700 : 320)) {
+      taps.n++; taps.t = ts;
+      seekBy(side * 10, side);
+    } else taps = { t: ts, side, n: 0 };
   });
 
   // ---------- Свайпы по трекам: вправо — в очередь, влево — в любимые ----------
@@ -736,8 +898,10 @@
   const opt = (name, val, label) => '<button class="chip' + (prefs[name] === val ? ' on' : '') + '" data-pref="' + name + '" data-val="' + val + '">' + label + '</button>';
   pcard.innerHTML = '<h3>Плеер</h3>' +
     '<p class="hint">Фон</p><div class="chips">' + opt('bg', 'blur', 'Размытая обложка') + opt('bg', 'grad', 'Градиент под обложку') + opt('bg', 'plain', 'Как тема') + '</div>' +
-    '<p class="hint">Форма обложки</p><div class="chips">' + opt('shape', 'round', 'Скруглённая') + opt('shape', 'square', 'Квадрат') + opt('shape', 'circle', 'Круг') + '</div>' +
-    '<label class="switch"><input type="checkbox" id="pref-spin"' + (prefs.spin ? ' checked' : '') + '><span></span>Вращать обложку, как пластинку</label>';
+    '<p class="hint">Форма обложки</p><div class="chips">' + opt('shape', 'round', 'Скруглённая') + opt('shape', 'square', 'Квадрат') + opt('shape', 'circle', 'Круг') + opt('shape', 'vinyl', 'Пластинка') + '</div>' +
+    '<label class="switch"><input type="checkbox" id="pref-spin"' + (prefs.spin ? ' checked' : '') + '><span></span>Вращать обложку целиком</label>' +
+    '<label class="switch"><input type="checkbox" id="pref-glow"' + (prefs.glow ? ' checked' : '') + '><span></span>Свечение и живой фон в ритм музыки</label>' +
+    '<p class="hint">Жесты на обложке: два касания слева или справа — перемотка на 10 с, свайп в сторону — соседний трек, долгое нажатие — своя обложка.</p>';
   $('panel-themes').prepend(pcard);
   pcard.addEventListener('click', (e) => {
     const b = e.target.closest('[data-pref]');
@@ -747,6 +911,7 @@
     ls.set('prefs', prefs); applyPrefs();
   });
   $('pref-spin').addEventListener('change', (e) => { prefs.spin = e.target.checked; ls.set('prefs', prefs); applyPrefs(); });
+  $('pref-glow').addEventListener('change', (e) => { prefs.glow = e.target.checked; ls.set('prefs', prefs); applyPrefs(); });
 
   // ---------- Свой фон приложения и свои обложки (картинки и GIF, лежат в IndexedDB) ----------
   const idb = (() => {

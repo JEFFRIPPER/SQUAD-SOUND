@@ -76,12 +76,27 @@
     return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
   };
 
-  // customAccent2 — второй цвет градиента (для акцента из обложки)
-  window.applyTheme = function (id, customAccent, customAccent2) {
+  // смесь двух #rrggbb: k — доля первого цвета
+  const mix = (a, b, k) => {
+    const pa = parseInt(String(a).slice(1), 16), pb = parseInt(String(b).slice(1), 16);
+    const c = (sh) => Math.round(((pa >> sh) & 255) * k + ((pb >> sh) & 255) * (1 - k));
+    return '#' + ((1 << 24) + (c(16) << 16) + (c(8) << 8) + c(0)).toString(16).slice(1);
+  };
+  const isHex = (x) => /^#[0-9a-f]{6}$/i.test(String(x || ''));
+
+  // customAccent2 — второй цвет градиента (для акцента из обложки).
+  // full — Material You: фон, карточки и линии тоже слегка окрашиваются в цвет обложки
+  window.applyTheme = function (id, customAccent, customAccent2, full) {
     const t = window.SQUAD_THEMES.find((x) => x.id === id) || window.SQUAD_THEMES[0];
     const root = document.documentElement;
     const v = Object.assign({}, t.vars);
     if (customAccent) { v.accent = customAccent; v.accent2 = customAccent2 || customAccent; v.onAccent = lum(customAccent) > 0.55 ? '#111111' : '#ffffff'; }
+    if (full && isHex(customAccent)) {
+      const dark = lum(v.bg) < 0.5;
+      for (const [k, share] of [['bg', dark ? 0.1 : 0.06], ['bg2', dark ? 0.12 : 0.07], ['card', dark ? 0.14 : 0.08], ['line', 0.22]]) if (isHex(v[k])) v[k] = mix(customAccent, v[k], share);
+      if (isHex(v.muted)) v.muted = mix(customAccent, v.muted, 0.25);
+    }
+    root.classList.toggle('dyn-color', !!full);
     root.dataset.theme = t.id;
     root.style.setProperty('--bg', v.bg);
     root.style.setProperty('--bg2', v.bg2);
